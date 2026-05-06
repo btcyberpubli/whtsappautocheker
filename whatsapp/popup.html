@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Auto Checker</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 420px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #0d1418;
+      color: #e1e8ed;
+      padding: 0;
+      margin: 0;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #00a884 0%, #008070 100%);
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    .header h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #fff;
+      margin: 0;
+    }
+
+    .header p {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.8);
+      margin: 5px 0 0 0;
+    }
+
+    .content {
+      padding: 20px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .status-box {
+      background: #1e2329;
+      border-radius: 12px;
+      padding: 16px;
+      border: 1px solid #25363f;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .status-label {
+      color: #8a9199;
+      font-weight: 500;
+    }
+
+    .status-value {
+      color: #00a884;
+      font-weight: 600;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+    }
+
+    .status-value.error {
+      color: #f55e4d;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-start {
+      background: #00a884;
+      color: white;
+    }
+
+    .btn-start:hover:not(:disabled) {
+      background: #01a878;
+      box-shadow: 0 4px 12px rgba(0, 168, 132, 0.3);
+    }
+
+    .btn-start:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-stop {
+      background: #f55e4d;
+      color: white;
+    }
+
+    .btn-stop:hover:not(:disabled) {
+      background: #e04938;
+      box-shadow: 0 4px 12px rgba(245, 94, 77, 0.3);
+    }
+
+    .btn-stop:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .section-title {
+      font-size: 12px;
+      color: #00a884;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 4px;
+    }
+
+    .alerts-list {
+      background: #1e2329;
+      border-radius: 8px;
+      border: 1px solid #25363f;
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .alerts-section {
+      margin-bottom: 12px;
+    }
+
+    .alerts-section h4 {
+      font-size: 11px;
+      color: #00a884;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .alert-item {
+      background: rgba(245, 94, 77, 0.08);
+      border-left: 3px solid #f55e4d;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-bottom: 6px;
+      color: #ffb3b3;
+    }
+
+    .alert-item.error {
+      background: rgba(245, 94, 77, 0.12);
+      border-left: 3px solid #ff6b5b;
+      color: #ff9999;
+    }
+
+    .alert-item.warning {
+      background: rgba(255, 193, 7, 0.08);
+      border-left: 3px solid #ffc107;
+      color: #ffe082;
+    }
+
+    .alert-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .no-alerts {
+      font-size: 11px;
+      color: #00a884;
+      text-align: center;
+      padding: 12px 8px;
+      font-weight: 500;
+    }
+
+    .info-box {
+      background: rgba(0, 168, 132, 0.08);
+      border-left: 3px solid #00a884;
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: #b0bcc4;
+    }
+
+    .info-box strong {
+      color: #00a884;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .info-box ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .info-box li {
+      margin: 3px 0;
+    }
+
+    .info-box li:before {
+      content: "• ";
+      color: #00a884;
+      font-weight: bold;
+      margin-right: 4px;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #1e2329;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #3f4d57;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #54626d;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>💬 WhatsApp Auto Checker</h1>
+      <p>Verifica automáticamente que las líneas estén vivas</p>
+    </div>
+
+    <div class="content">
+      <div class="status-box">
+        <div class="status-item">
+          <span class="status-label">🔔 Estado</span>
+          <span class="status-value" id="estado">Detenido</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">📊 Chats escaneados</span>
+          <span class="status-value" id="scanned">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">⚠️ Líneas sin leer</span>
+          <span class="status-value" id="unread">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">⏰ Próximo ciclo</span>
+          <span class="status-value" id="nextRun">Esperando...</span>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="btn-start" id="startBtn">▶ Iniciar</button>
+        <button class="btn-stop" id="stopBtn">⏹ Detener</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">🚨 Alertas críticas</div>
+        <div class="alerts-list">
+          <div id="alertsList"></div>
+        </div>
+      </div>
+
+      <div class="info-box">
+        <strong>📖 Instrucciones</strong>
+        <ul>
+          <li>Presiona INICIAR para comenzar</li>
+          <li>Se ejecutará cada 10 minutos</li>
+          <li>Funciona incluso si minimizas la ventana</li>
+          <li>Envía mensajes aleatorios</li>
+          <li>Detecta single check (no llega)</li>
+          <li>Envía alerta al servidor si falla</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
