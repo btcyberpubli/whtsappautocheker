@@ -6,7 +6,6 @@ const estadoEl = document.getElementById('estado');
 const scannedEl = document.getElementById('scanned');
 const unreadEl = document.getElementById('unread');
 const nextRunEl = document.getElementById('nextRun');
-const alertsListEl = document.getElementById('alertsList');
 
 // Estado inicial
 updateStatus();
@@ -108,47 +107,9 @@ function updateStatus() {
       // Habilitar/deshabilitar botones
       startBtn.disabled = isRunning;
       stopBtn.disabled = !isRunning;
-
-      // Actualizar lista de alertas
-      updateAlerts(failedChats, sentAlerts);
     }
   );
 }
-
-function updateAlerts(failedChats, sentAlerts) {
-  let html = '';
-  
-  // Mostrar alertas enviadas al servidor (más importante)
-  if (sentAlerts && sentAlerts.length > 0) {
-    html += '<div class="alerts-section"><h4>🚨 Alertas Enviadas (Caídas Detectadas):</h4>';
-    sentAlerts.slice(-5).reverse().forEach((alert, index) => {
-      html += `<div class="alert-item error">
-        <strong>⚠️ #${index + 1}</strong> ${alert.contactName || 'Desconocido'}<br>
-        <small>📱 ${alert.chatId || 'N/A'}</small><br>
-        <small>⏰ ${new Date(alert.detectedAt).toLocaleTimeString()}</small><br>
-        <small>📊 ID: ${alert.alertId ? alert.alertId.substring(0, 20) + '...' : 'N/A'}</small>
-      </div>`;
-    });
-    html += '</div>';
-  }
-  
-  // Mostrar líneas sin leer
-  if (failedChats && failedChats.length > 0) {
-    html += '<div class="alerts-section"><h4>⚠️ Líneas Sin Leer (Sin Alerta):</h4>';
-    failedChats.forEach((chat, index) => {
-      html += `<div class="alert-item warning">
-        <strong>#${index + 1}</strong> ${chat.name || 'Chat desconocido'}<br>
-        <small>Último intento: ${chat.lastCheck || 'N/A'}</small>
-      </div>`;
-    });
-    html += '</div>';
-  }
-  
-  if (!html) {
-    html = '<div class="no-alerts">✅ Todas las líneas están activas</div>';
-  }
-  
-  alertsListEl.innerHTML = html;
 }
 
 // Escuchar mensajes del content script

@@ -366,21 +366,12 @@ const whatsappChecker = {
   },
 
   /**
-   * Envía el mensaje
+   * 🔄 MEJORADO: Envía el mensaje (ahora usa sendMessageWithRetry internamente)
+   * Mantiene compatibilidad con código existente
    */
   async sendMessage() {
-    const sendButton = document.querySelector('button[aria-label="Enviar"]');
-    
-    if (!sendButton) {
-      console.warn('❌ No se encontró botón de envío');
-      return false;
-    }
-
-    console.log('📤 Enviando mensaje...');
-    sendButton.click();
-    await this.sleep(3500);
-    
-    return true;
+    const result = await this.sendMessageWithRetry(3);
+    return result.success;
   },
 
   /**
@@ -456,6 +447,220 @@ const whatsappChecker = {
       return true;
     }
     return false;
+  },
+
+  /**
+   * 🆕 NUEVA FUNCIÓN: Verifica si el mensaje está en estado "Borrador"
+   */
+  checkIfDraft() {
+    // MÉTODO 1: Revisar si el input field aún tiene contenido
+    const inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
+    if (inputBox && (inputBox.textContent.trim() || inputBox.innerText.trim())) {
+      console.log('🚨 ALERTA CRÍTICA: Mensaje en estado BORRADOR (input con contenido)');
+      return true;
+    }
+    
+    // MÉTODO 2: Si no hay input visible pero el texto de escritura dice algo
+    const composerElement = document.querySelector('[data-testid="conversation-compose-box"]');
+    if (composerElement) {
+      const text = composerElement.textContent.trim();
+      if (text && text.length > 0) {
+        console.log('⚠️ ALERTA: Posible borrador detectado en composer');
+        return true;
+      }
+    }
+    
+    return false;
+  },
+
+  /**
+   * 🆕 NUEVA FUNCIÓN: Valida que el mensaje se envió correctamente
+   * Retorna: { sent: boolean, reason: string, timestamp: ISO, attempts: number }
+   */
+  async validateMessageSent(timeoutMs = 8000) {
+    console.log('🔍 Validando envío del mensaje...');
+    
+    const startTime = Date.now();
+    let attempts = 0;
+    const maxAttempts = 15;
+    
+    while (Date.now() - startTime < timeoutMs && attempts < maxAttempts) {
+      attempts++;
+      
+      // 1. Verificar que el input se limpió
+      const inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
+      const inputCleaned = !inputBox || !inputBox.textContent.trim();
+      
+      if (!inputCleaned) {
+        console.log(`⏳ Validación intento ${attempts}: Input aún contiene texto`);
+        await this.sleep(500);
+        continue;
+      }
+      
+      // 2. Verificar que hay checkmarks
+      const hasCheckmark = this.checkSingleCheck() || this.checkIfRead();
+      
+      if (!hasCheckmark) {
+        console.log(`⏳ Validación intento ${attempts}: Sin checkmarks aún`);
+        await this.sleep(500);
+        continue;
+      }
+      
+      // 3. Verificar que el mensaje aparece en la lista
+      const messages = document.querySelectorAll('[data-testid="msg"]');
+      if (messages.length === 0) {
+        console.log(`⏳ Validación intento ${attempts}: Mensaje no aparece en lista`);
+        await this.sleep(500);
+        continue;
+      }
+      
+      const elapsedMs = Date.now() - startTime;
+      console.log(`✅ ENVÍO VALIDADO en ${attempts} intentos (${elapsedMs}ms)`);
+      return { 
+        sent: true, 
+        reason: 'Validación exitosa',
+        timestamp: new Date().toISOString(),
+        attempts: attempts,
+        elapsedMs: elapsedMs
+      };
+    }
+    
+    // Si llegamos acá, el envío falló
+    console.error('❌ FALLÓ LA VALIDACIÓN: Mensaje no se envió correctamente');
+    return { 
+      sent: false, 
+      reason: 'Timeout esperando confirmación de envío',
+      timestamp: new Date().toISOString(),
+      attempts: attempts,
+      elapsedMs: Date.now() - startTime
+    };
+  },
+
+  /**
+   * 🆕 NUEVA FUNCIÓN: Envía el mensaje con reintentos inteligentes
+   * Retorna: { success: boolean, attempts: number, validationDetails?: object, error?: string }
+   */
+  async sendMessageWithRetry(maxRetries = 3) {
+    let lastError = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      console.log(`📤 Intento de envío ${attempt}/${maxRetries}...`);
+      
+      try {
+        // Buscar botón
+        const sendButton = document.querySelector('button[aria-label="Enviar"]');
+        if (!sendButton) {
+          console.warn(`❌ Intento ${attempt}: Botón de envío no encontrado`);
+          lastError = 'Botón de envío no encontrado';
+          
+          if (attempt < maxRetries) {
+            console.log(`⏳ Reintentando en 1500ms...`);
+            await this.sleep(1500);
+            continue;
+          }
+          break;
+        }
+        
+        // Hacer click
+        console.log(`🔘 Clickeando botón de envío (intento ${attempt})...`);
+        sendButton.click();
+        
+        // Esperar brevemente después del click
+        await this.sleep(800);
+        
+        // Validar envío
+        const validation = await this.validateMessageSent(6000);
+        
+        if (validation.sent) {
+          console.log(`✅ MENSAJE ENVIADO EXITOSAMENTE EN INTENTO ${attempt}`);
+          return {
+            success: true,
+            attempts: attempt,
+            validationDetails: validation
+          };
+        } else {
+          lastError = validation.reason;
+          console.log(`⚠️ Validación falló (intento ${attempt}): ${validation.reason}`);
+          
+          // Reintento
+          if (attempt < maxRetries) {
+            console.log(`⏳ Esperando 2000ms antes de reintentar...`);
+            await this.sleep(2000);
+          }
+        }
+      } catch (error) {
+        console.error(`❌ Error en intento ${attempt}:`, error);
+        lastError = error.message;
+        
+        if (attempt < maxRetries) {
+          await this.sleep(1500);
+        }
+      }
+    }
+    
+    // Todos los intentos fallaron
+    console.error(`❌ FALLÓ ENVÍO DESPUÉS DE ${maxRetries} INTENTOS`);
+    
+    // Verificar si es borrador
+    const isDraft = this.checkIfDraft();
+    
+    return {
+      success: false,
+      attempts: maxRetries,
+      error: lastError,
+      isDraft: isDraft
+    };
+  },
+
+  /**
+   * 🆕 NUEVA FUNCIÓN: Detecta múltiples tipos de problemas con el envío
+   */
+  async detectDeliveryIssues(contactName, message, chatId) {
+    const issues = {
+      isDraft: false,
+      isSingleCheck: false,
+      isNotDelivered: false,
+      isRead: false,
+      timestamp: new Date().toISOString()
+    };
+    
+    // 1. Detectar Borrador
+    if (this.checkIfDraft()) {
+      issues.isDraft = true;
+      console.log('🚨 ALERTA CRÍTICA: MENSAJE EN BORRADOR');
+    }
+    
+    // 2. Detectar Single Check
+    if (this.checkSingleCheck()) {
+      issues.isSingleCheck = true;
+      issues.isNotDelivered = true;
+      console.log('🚨 ALERTA: Single Check - No entregado');
+    }
+    
+    // 3. Detectar Leído
+    if (this.checkIfRead()) {
+      issues.isRead = true;
+      console.log('✅ Mensaje leído correctamente');
+      return null; // Sin problema
+    }
+    
+    // Si hay algún problema, reportar
+    if (issues.isDraft || issues.isSingleCheck) {
+      const alertData = {
+        type: "whatsapp-delivery-issue",
+        contactName: contactName,
+        chatId: chatId,
+        message: message,
+        issues: issues,
+        detectedAt: issues.timestamp,
+        severity: issues.isDraft ? "critical" : "high",
+        source: "whatsapp-extension"
+      };
+      
+      return alertData;
+    }
+    
+    return null;
   },
 
   /**
@@ -573,6 +778,52 @@ const whatsappChecker = {
   },
 
   /**
+   * 🆕 NUEVA FUNCIÓN: Envía confirmación de ciclo completado exitosamente
+   */
+  async sendCycleConfirmation(chatsProcessed) {
+    try {
+      const endpoint = 'https://accountant-services.co.uk/api/whatsapp-alert';
+      
+      const confirmationData = {
+        type: "whatsapp-cycle-ok",
+        contactName: `Ciclo completado - ${chatsProcessed} chats`,
+        chatId: "cycle-check@automation",
+        detectedAt: new Date().toISOString(),
+        severity: "low",
+        source: "whatsapp-extension",
+        status: "success"
+      };
+
+      console.log('📤 ENVIANDO CONFIRMACIÓN DE CICLO:');
+      console.log('   Chats procesados:', chatsProcessed);
+      console.log('   Timestamp:', confirmationData.detectedAt);
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(confirmationData)
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        console.warn('⚠️ No se pudo enviar confirmación:', data);
+        return false;
+      }
+
+      console.log('✅ CONFIRMACIÓN DE CICLO ENVIADA');
+      console.log('   ID:', data.alertId);
+      
+      return data;
+    } catch (error) {
+      console.error('❌ Error enviando confirmación:', error);
+      return false;
+    }
+  },
+
+  /**
    * Detecta single check y reporta la caída
    */
   async detectAndReportSingleCheck(contactName, lastMessage, chatId) {
@@ -671,25 +922,45 @@ const whatsappChecker = {
       // Pausa antes de enviar (como si revisara el mensaje)
       await this.sleep(getRandomDelay(300, 800));
 
-      // Enviar
-      const sent = await this.sendMessage();
-      if (!sent) {
-        console.error(`❌ No se pudo enviar en ${chatName}`);
-        return { name: chatName, success: false, reason: 'No se pudo enviar' };
+      // 🆕 MEJORADO: Enviar con reintentos y validación
+      console.log('📤 Iniciando proceso de envío con validación...');
+      const sendResult = await this.sendMessageWithRetry(3);
+      
+      if (!sendResult.success) {
+        console.error(`❌ Fallo en envío después de ${sendResult.attempts} intentos`);
+        
+        // 🆕 Detectar si es borrador y reportar
+        const issues = await this.detectDeliveryIssues(chatName, message, this.getChatId());
+        if (issues) {
+          console.log('🚨 Problemas detectados, enviando alerta al servidor...');
+          const alertResult = await this.sendAlertToServer(issues);
+          if (alertResult) {
+            console.log('✅ Alerta de envío fallido reportada');
+          }
+        }
+        
+        return { 
+          name: chatName, 
+          success: false, 
+          reason: 'Fallo en envío después de reintentos',
+          sendDetails: sendResult,
+          chatId: this.getChatId()
+        };
       }
 
-      // Esperar bien a que se registre el envío en WhatsApp
-      console.log('⏳ Esperando a que WhatsApp registre el envío...');
+      // 🆕 MEJORADO: El envío fue validado, pero esperar más para confirmar entrega
+      console.log(`📤 Mensaje enviado exitosamente en intento ${sendResult.attempts}`);
+      console.log('⏳ Esperando confirmación final de WhatsApp...');
       await this.sleep(getRandomDelay(2000, 3500));
 
       console.log(`📤 Mensaje enviado: "${message}" → ${chatName} (${chatId})`);
 
-      // Esperar a verificar lectura (máximo 30 segundos, pero se para si se lee antes)
+      // 🆕 MEJORADO: Verificar lectura con mejor sincronización
       console.log('⏳ Verificando lectura/entrega en tiempo real...');
       let isRead = false;
       let hasSingleCheck = false;
       let alertSent = false;
-      const maxWaitTime = 30000; // 30 segundos máximo
+      const maxWaitTime = 25000; // 25 segundos (reducido porque ya validamos en sendWithRetry)
       const checkInterval = 1000; // Verificar cada 1 segundo
       let elapsedTime = 0;
 
@@ -804,6 +1075,17 @@ const whatsappChecker = {
     console.log(`🚨 Alertas enviadas: ${alertsCount}`);
     console.log(`📋 Próximo ciclo en 10 minutos`);
     console.log('='.repeat(70) + '\n');
+
+    // 🆕 ENVIAR CONFIRMACIÓN DE CICLO COMPLETADO
+    if (results.length > 0) {
+      console.log('📤 Enviando confirmación de ciclo completado...');
+      const confirmationSent = await this.sendCycleConfirmation(results.length);
+      if (confirmationSent) {
+        console.log('✅ Confirmación recibida por el servidor');
+      } else {
+        console.log('⚠️ No se pudo enviar la confirmación, continuando...');
+      }
+    }
 
     // Actualizar popup
     this.updatePopupStatus(results.length, failedCount);
