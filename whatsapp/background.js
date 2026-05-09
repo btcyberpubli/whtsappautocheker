@@ -70,12 +70,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.set({ whatsappAutoRunning: true });
     setupCheckInterval(); // Configurar alarma
     sendResponse({ status: 'iniciado' });
+    return true;
   } 
   else if (message.action === 'stopWhatsAppChecker') {
     console.log('🔴 Deteniendo auto checker');
     chrome.storage.local.set({ whatsappAutoRunning: false });
     chrome.alarms.clear('whatsappCheckInterval');
     sendResponse({ status: 'detenido' });
+    return true;
   }
   else if (message.action === 'updateUI') {
     // Actualizar storage con datos del content script
@@ -85,6 +87,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       unreadLines: message.unread,
       failedChats: message.failedChats || []
     });
+    return true;
   }
   else if (message.action === 'alertSent') {
     console.log('🚨 Alerta registrada:', message.alert);
@@ -96,6 +99,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       chrome.storage.local.set({ sentAlerts });
     });
+    return true;
   }
 });
 

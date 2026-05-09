@@ -79,14 +79,45 @@ const whatsappChecker = {
    * Obtiene todos los chats de la lista
    */
   getChatsFromList() {
-    // Buscamos los elementos de chat con data-testid="list-item-*"
-    const chatRows = document.querySelectorAll('[role="row"][data-testid^="list-item-"]');
-    console.log(`🔍 Encontrados ${chatRows.length} chats en total`);
+    let chatRows = [];
+    
+    // ESTRATEGIA 1: Buscar con rol="row" (original)
+    chatRows = document.querySelectorAll('[role="row"][data-testid^="list-item-"]');
+    console.log(`🔍 Estrategia 1: Encontrados ${chatRows.length} chats`);
+    
+    // ESTRATEGIA 2: Si no encontró, buscar por data-testid="list-item-" solo
+    if (chatRows.length === 0) {
+      console.log('🔍 Estrategia 1 falló, intentando Estrategia 2...');
+      chatRows = document.querySelectorAll('[data-testid^="list-item-"]');
+      console.log(`🔍 Estrategia 2: Encontrados ${chatRows.length} chats`);
+    }
+    
+    // ESTRATEGIA 3: Si aún no encontró, buscar por clases comunes
+    if (chatRows.length === 0) {
+      console.log('🔍 Estrategia 2 falló, intentando Estrategia 3...');
+      chatRows = document.querySelectorAll('div[role="option"], div.x1n2onr6, [data-chat-id]');
+      console.log(`🔍 Estrategia 3: Encontrados ${chatRows.length} chats`);
+    }
+    
+    // ESTRATEGIA 4: Buscar en la lista principal
+    if (chatRows.length === 0) {
+      console.log('🔍 Estrategia 3 falló, intentando Estrategia 4...');
+      const mainList = document.querySelector('[data-testid="chat-list"]') || 
+                       document.querySelector('div[role="list"]');
+      if (mainList) {
+        chatRows = mainList.querySelectorAll('[role="listitem"], [role="option"], div[tabindex="0"]');
+        console.log(`🔍 Estrategia 4: Encontrados ${chatRows.length} chats en lista principal`);
+      }
+    }
+    
+    console.log(`🔍 TOTAL: Encontrados ${chatRows.length} chats en total`);
     
     // Log detallado de cada chat encontrado
     chatRows.forEach((chat, i) => {
       const name = this.getChatName(chat);
-      console.log(`  ${i + 1}. ${name}`);
+      if (name !== 'Chat sin nombre' || i < 5) { // Mostrar primeros 5 aunque no encuentre nombre
+        console.log(`  ${i + 1}. ${name}`);
+      }
     });
     
     return Array.from(chatRows);
@@ -97,9 +128,35 @@ const whatsappChecker = {
    */
   getChatName(chatElement) {
     try {
-      const titleElement = chatElement.querySelector('[data-testid="cell-frame-title"] span[dir="auto"]');
-      const name = titleElement ? titleElement.textContent.trim() : 'Chat sin nombre';
-      return name;
+      // ESTRATEGIA 1: data-testid="cell-frame-title" span[dir="auto"]
+      let titleElement = chatElement.querySelector('[data-testid="cell-frame-title"] span[dir="auto"]');
+      if (titleElement && titleElement.textContent.trim()) {
+        return titleElement.textContent.trim();
+      }
+      
+      // ESTRATEGIA 2: Buscar span con dir="auto" más directo
+      titleElement = chatElement.querySelector('span[dir="auto"]');
+      if (titleElement && titleElement.textContent.trim()) {
+        return titleElement.textContent.trim();
+      }
+      
+      // ESTRATEGIA 3: Buscar título por atributo aria-label
+      const ariaLabel = chatElement.getAttribute('aria-label');
+      if (ariaLabel && ariaLabel.trim()) {
+        // Extraer el nombre del aria-label (usualmente formato: "Nombre, Mensaje")
+        const nameMatch = ariaLabel.split(',')[0];
+        if (nameMatch && nameMatch.trim()) {
+          return nameMatch.trim();
+        }
+      }
+      
+      // ESTRATEGIA 4: Buscar data-chat-id y usar ese como ID si todo lo demás falla
+      const chatId = chatElement.getAttribute('data-chat-id');
+      if (chatId) {
+        return `Chat (${chatId})`;
+      }
+      
+      return 'Chat sin nombre';
     } catch (error) {
       console.error('Error obteniendo nombre:', error);
       return 'Chat sin nombre';
@@ -188,64 +245,120 @@ const whatsappChecker = {
       chatElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await this.sleep(1000);
       
-      // ESTRATEGIA 1: Intentar click en el elemento row con eventos realistas
-      console.log(`🎯 Estrategia 1: Click en role="row" con eventos del mouse...`);
-      let clickedSuccessfully = this.simulateRealClick(chatElement);
+      // ESTRATEGIA MEJORADA: Buscar el área clickeable específica (nombre/avatar) evitando iconos
+      console.log(`🎯 Buscando área de nombre/avatar en el chat...`);
       
-      if (clickedSuccessfully) {
-        console.log('✅ Eventos de mouse disparados en role="row"');
-        await this.sleep(3500);
+      // Buscar elementos de título/nombre dentro del row
+      let clickTarget = null;
+      
+      // Opción 1: Buscar específicamente el span con el nombre
+      let titleElement = chatElement.querySelector('[data-testid="cell-frame-title"]');
+      if (titleElement) {
+        clickTarget = titleElement;
+        console.log('✅ Encontrado elemento de título');
       }
       
-      // ESTRATEGIA 2: Si no abrió, intentar en elemento tabindex="0"
-      let inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
-      if (!inputBox) {
-        console.log(`🎯 Estrategia 2: Buscando elemento [tabindex="0"]...`);
-        const tabbableElement = chatElement.querySelector('[tabindex="0"]');
-        
-        if (tabbableElement) {
-          console.log('✅ Elemento [tabindex="0"] encontrado, clickeando...');
-          tabbableElement.focus();
-          await this.sleep(400);
-          this.simulateRealClick(tabbableElement);
-          await this.sleep(3500);
+      // Opción 2: Buscar el avatar o área izquierda
+      if (!clickTarget) {
+        const avatar = chatElement.querySelector('[data-testid="avatar"]');
+        if (avatar && avatar.offsetParent !== null) {
+          clickTarget = avatar;
+          console.log('✅ Encontrado avatar');
         }
       }
       
-      // ESTRATEGIA 3: Si no abrió, intentar en div específico dentro del chat
-      inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
-      if (!inputBox) {
-        console.log(`🎯 Estrategia 3: Buscando divs clickeables en el chat...`);
-        const divs = chatElement.querySelectorAll('div[role="gridcell"], div.x1n2onr6');
-        
+      // Opción 3: Buscar el primer div visible (generalmente es el contenedor del nombre)
+      if (!clickTarget) {
+        const divs = chatElement.querySelectorAll('div[role="gridcell"], [role="option"]');
         for (let div of divs) {
-          if (div.offsetParent !== null) { // Visible
-            console.log('✅ Div clickeable encontrado');
-            this.simulateRealClick(div);
-            await this.sleep(3500);
-            
-            inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
-            if (inputBox) {
-              console.log('✅ Chat se abrió!');
-              break;
+          if (div.offsetParent !== null && div.textContent.includes(chatName)) {
+            clickTarget = div;
+            console.log('✅ Encontrado elemento con nombre');
+            break;
+          }
+        }
+      }
+      
+      // Opción 4: Si aún no tenemos target, usar el row entero pero hacer click a la izquierda
+      if (!clickTarget) {
+        clickTarget = chatElement;
+        console.log('⚠️ Usando elemento de row, haciendo click a la izquierda...');
+      }
+      
+      // Hacer click en el target
+      console.log(`🎯 Haciendo click en: ${clickTarget.tagName}`);
+      this.simulateRealClick(clickTarget);
+      await this.sleep(3500);
+      
+      // Verificar que el chat se abrió buscando el input box
+      let chatOpened = await this.waitForCompositionBox(6000);
+      
+      if (chatOpened) {
+        console.log(`✅ Chat abierto correctamente - input box visible`);
+        return true;
+      }
+      
+      // ESTRATEGIA 2: Si no abrió, intentar scroll y esperar más
+      console.log(`🎯 Estrategia 2: Esperando más a que el chat cargue...`);
+      await this.sleep(2000);
+      chatOpened = await this.waitForCompositionBox(5000);
+      
+      if (chatOpened) {
+        console.log('✅ Chat se abrió con más espera');
+        return true;
+      }
+      
+      // ESTRATEGIA 3: Click en el chat de nuevo pero con más fuerza
+      console.log(`🎯 Estrategia 3: Reintentando click...`);
+      this.simulateRealClick(chatElement);
+      await this.sleep(4000);
+      
+      chatOpened = await this.waitForCompositionBox(5000);
+      if (chatOpened) {
+        console.log(`✅ Chat abierto en reintento`);
+        return true;
+      }
+      
+      console.error(`❌ No se pudo abrir el chat después de intentar todas las estrategias`);
+      return false;
+      
+    } catch (error) {
+      console.error(`❌ Error al abrir chat:`, error);
+      return false;
+    }
+  },
+
+  /**
+   * Espera a que el compose box contenteditable esté disponible
+   */
+  async waitForCompositionBox(maxWaitMs = 5000) {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitMs) {
+      // Buscar contenteditable que sea el compose box
+      const editables = document.querySelectorAll('[contenteditable="true"]');
+      
+      for (let editable of editables) {
+        if (editable.offsetParent !== null) { // Visible
+          const style = window.getComputedStyle(editable);
+          // Verificar que no sea display:none o visibility:hidden
+          if (style.display !== 'none' && style.visibility !== 'hidden') {
+            // Verificar que sea razonablemente pequeño (un input, no toda la página)
+            const rect = editable.getBoundingClientRect();
+            if (rect.height < 200 && rect.width > 50) { // Dimension típica de un input
+              console.log(`✅ Composition box encontrado (${rect.width}x${rect.height})`);
+              return true;
             }
           }
         }
       }
       
-      // Verificar final
-      inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
-      if (inputBox) {
-        console.log(`✅ Chat abierto correctamente`);
-        return true;
-      } else {
-        console.log(`⚠️ El chat no se abrió, pero continuando...`);
-        return true;
-      }
-    } catch (error) {
-      console.error(`❌ Error al abrir chat:`, error);
-      return false;
+      // Esperar un poco y reintentar
+      await this.sleep(300);
     }
+    
+    console.log(`⏳ Timeout esperando composition box (${maxWaitMs}ms)`);
+    return false;
   },
 
   /**
@@ -255,19 +368,24 @@ const whatsappChecker = {
     console.log(`✍️ Escribiendo de forma humana: "${message}"`);
     
     inputBox.focus();
-    await this.sleep(getRandomDelay(200, 500)); // Pausa antes de escribir
+    await this.sleep(getRandomDelay(200, 500));
     
-    let currentText = '';
-    
+    // Método simple y robusto: usar execCommand que es más compatible
     for (let i = 0; i < message.length; i++) {
       const char = message[i];
       
-      // Simular velocidad de tipeo variable (50-150ms por carácter)
+      // Simular velocidad de tipeo variable (40-120ms por carácter)
       const typeSpeed = getRandomDelay(40, 120);
       await this.sleep(typeSpeed);
       
-      currentText += char;
-      inputBox.textContent = currentText;
+      try {
+        // Usar execCommand para insertar texto - es más robusto
+        document.execCommand('insertText', false, char);
+      } catch (e) {
+        // Si falla execCommand, intentar directamente con textContent
+        console.warn(`Advertencia escribiendo carácter "${char}":`, e.message);
+        inputBox.textContent += char;
+      }
       
       // Disparar evento de input para que WhatsApp lo detecte
       const inputEvent = new InputEvent('input', {
@@ -283,6 +401,10 @@ const whatsappChecker = {
         await this.sleep(getRandomDelay(200, 600));
       }
     }
+    
+    // Disparar eventos finales para que WhatsApp registre el cambio
+    const changeEvent = new Event('change', { bubbles: true });
+    inputBox.dispatchEvent(changeEvent);
     
     console.log('✅ Mensaje escrito humanamente');
   },
@@ -305,8 +427,17 @@ const whatsappChecker = {
       // Esperar un poquito (como si se diera cuenta)
       await this.sleep(getRandomDelay(400, 800));
       
-      // Limpiar y reescribir correctamente
-      inputBox.textContent = '';
+      // Limpiar (Ctrl+A, Delete)
+      try {
+        inputBox.focus();
+        document.execCommand('selectAll', false);
+        document.execCommand('delete', false);
+      } catch (e) {
+        console.warn('Error limpiando para corrección:', e.message);
+        inputBox.innerHTML = '';
+        inputBox.textContent = '';
+      }
+      
       await this.sleep(getRandomDelay(100, 300));
     }
     
@@ -320,23 +451,90 @@ const whatsappChecker = {
   async writeMessage(message) {
     console.log(`✍️ Buscando input de mensaje...`);
     
-    // Buscar el input con reintentos
-    let inputBox = null;
-    let attempts = 0;
-    const maxAttempts = 10;
+    // ESTRATEGIA 1: Buscar por data-testid exacto
+    let inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
+    if (inputBox && inputBox.offsetParent !== null) {
+      console.log(`✅ Input encontrado - Estrategia 1 (data-testid)`);
+    } else {
+      inputBox = null;
+    }
     
-    while (!inputBox && attempts < maxAttempts) {
-      inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
-      
-      if (!inputBox) {
-        attempts++;
-        console.log(`⏳ Intento ${attempts}/${maxAttempts} - Input no encontrado aún...`);
-        await this.sleep(500);
+    // ESTRATEGIA 2: Buscar por role="textbox"
+    if (!inputBox) {
+      console.log(`🔍 Estrategia 2: Buscando por role="textbox"...`);
+      inputBox = document.querySelector('[role="textbox"][contenteditable="true"]');
+      if (inputBox && inputBox.offsetParent !== null) {
+        console.log(`✅ Input encontrado - Estrategia 2 (role=textbox)`);
+      } else {
+        inputBox = null;
       }
     }
     
+    // ESTRATEGIA 3: Buscar contenteditable más general
     if (!inputBox) {
-      console.warn('❌ No se encontró el input después de 5 segundos');
+      console.log(`🔍 Estrategia 3: Buscando contenteditable general...`);
+      const editables = document.querySelectorAll('[contenteditable="true"]');
+      for (let editable of editables) {
+        // Buscar el que esté visible y cerca del botón
+        if (editable.offsetParent !== null && editable.getAttribute('data-testid') !== 'contact-profile-scrollable-container') {
+          const styles = window.getComputedStyle(editable);
+          // Verificar que no sea display:none
+          if (styles.display !== 'none' && styles.visibility !== 'hidden') {
+            inputBox = editable;
+            console.log(`✅ Input encontrado - Estrategia 3 (contenteditable visible)`);
+            break;
+          }
+        }
+      }
+    }
+    
+    // ESTRATEGIA 4: Buscar div con clases comunes de compose box
+    if (!inputBox) {
+      console.log(`🔍 Estrategia 4: Buscando por clases de compose box...`);
+      const composeDivs = document.querySelectorAll('div[class*="compose"], div[class*="input"], div[class*="write"]');
+      for (let div of composeDivs) {
+        if (div.offsetParent !== null && (div.contentEditable === 'true' || div.getAttribute('contenteditable') === 'true')) {
+          inputBox = div;
+          console.log(`✅ Input encontrado - Estrategia 4 (clase de compose)`);
+          break;
+        }
+      }
+    }
+    
+    // ESTRATEGIA 5: Buscar por posición cercana a botón de envío
+    if (!inputBox) {
+      console.log(`🔍 Estrategia 5: Buscando por posición cerca de botones...`);
+      const buttons = document.querySelectorAll('button');
+      let sendButtonArea = null;
+      
+      for (let btn of buttons) {
+        if (btn.offsetParent !== null) {
+          const rect = btn.getBoundingClientRect();
+          if (rect.top > window.innerHeight - 100) { // Botón en la zona baja (cerca de compose)
+            sendButtonArea = rect;
+            break;
+          }
+        }
+      }
+      
+      if (sendButtonArea) {
+        const editables = document.querySelectorAll('[contenteditable="true"]');
+        for (let editable of editables) {
+          const rect = editable.getBoundingClientRect();
+          const isNearButton = Math.abs(rect.bottom - sendButtonArea.bottom) < 50;
+          if (isNearButton && editable.offsetParent !== null) {
+            inputBox = editable;
+            console.log(`✅ Input encontrado - Estrategia 5 (por posición)`);
+            break;
+          }
+        }
+      }
+    }
+    
+    if (!inputBox || inputBox.offsetParent === null) {
+      console.warn('❌ No se encontró el input después de intentar todas las estrategias');
+      // Log para debugging
+      console.log('🔍 Contenteditable elements encontrados:', document.querySelectorAll('[contenteditable="true"]').length);
       return false;
     }
 
@@ -344,9 +542,23 @@ const whatsappChecker = {
     inputBox.focus();
     await this.sleep(getRandomDelay(300, 700));
     
-    // Limpiar contenido previo
-    inputBox.textContent = '';
-    inputBox.innerText = '';
+    // Limpiar contenido previo de forma SIMPLE y robusta
+    try {
+      // Usar selectAll y delete - método más compatible
+      document.execCommand('selectAll', false);
+      document.execCommand('delete', false);
+    } catch (e) {
+      console.warn('Advertencia limpiando input:', e.message);
+      // Fallback manual
+      try {
+        inputBox.innerHTML = '';
+        inputBox.textContent = '';
+      } catch (e2) {
+        console.warn('Error en fallback de limpieza:', e2.message);
+      }
+    }
+    
+    await this.sleep(200);
     
     // 70% de chance: escribir de forma humana
     // 30% de chance: simular error y corregir
@@ -356,6 +568,12 @@ const whatsappChecker = {
       await this.typeMessageHuman(inputBox, message);
     } else {
       await this.simulateTypoAndFix(inputBox, message);
+    }
+
+    // Verificar que el texto se escribió
+    const writtenText = inputBox.textContent || inputBox.innerText || '';
+    if (!writtenText.trim()) {
+      console.warn('⚠️ Advertencia: El texto no parece haberse escrito correctamente');
     }
 
     console.log('✅ Mensaje escrito');
@@ -497,39 +715,33 @@ const whatsappChecker = {
         continue;
       }
       
-      // 2. Verificar que hay checkmarks
-      const hasCheckmark = this.checkSingleCheck() || this.checkIfRead();
+      // 2. Verificar que hay checkmarks - ESTO ES LA CONFIRMACIÓN DEFINITIVA
+      const hasSingleCheck = this.checkSingleCheck();
+      const hasDoubleCheck = this.checkIfRead();
       
-      if (!hasCheckmark) {
-        console.log(`⏳ Validación intento ${attempts}: Sin checkmarks aún`);
-        await this.sleep(500);
-        continue;
+      if (hasSingleCheck || hasDoubleCheck) {
+        // ✅ SI HAY CHECKMARKS, EL MENSAJE FUE ENVIADO
+        const elapsedMs = Date.now() - startTime;
+        const status = hasDoubleCheck ? 'doble tilde (leído)' : 'tilde simple (enviado)';
+        console.log(`✅ ENVÍO VALIDADO en ${attempts} intentos con ${status} (${elapsedMs}ms)`);
+        return { 
+          sent: true, 
+          reason: `Validación exitosa - ${status}`,
+          timestamp: new Date().toISOString(),
+          attempts: attempts,
+          elapsedMs: elapsedMs
+        };
       }
       
-      // 3. Verificar que el mensaje aparece en la lista
-      const messages = document.querySelectorAll('[data-testid="msg"]');
-      if (messages.length === 0) {
-        console.log(`⏳ Validación intento ${attempts}: Mensaje no aparece en lista`);
-        await this.sleep(500);
-        continue;
-      }
-      
-      const elapsedMs = Date.now() - startTime;
-      console.log(`✅ ENVÍO VALIDADO en ${attempts} intentos (${elapsedMs}ms)`);
-      return { 
-        sent: true, 
-        reason: 'Validación exitosa',
-        timestamp: new Date().toISOString(),
-        attempts: attempts,
-        elapsedMs: elapsedMs
-      };
+      console.log(`⏳ Validación intento ${attempts}: Esperando checkmarks...`);
+      await this.sleep(500);
     }
     
-    // Si llegamos acá, el envío falló
-    console.error('❌ FALLÓ LA VALIDACIÓN: Mensaje no se envió correctamente');
+    // Si llegamos acá, no detectamos checkmarks
+    console.error('❌ FALLÓ LA VALIDACIÓN: No se detectaron checkmarks');
     return { 
       sent: false, 
-      reason: 'Timeout esperando confirmación de envío',
+      reason: 'No se detectaron checkmarks',
       timestamp: new Date().toISOString(),
       attempts: attempts,
       elapsedMs: Date.now() - startTime
@@ -547,10 +759,70 @@ const whatsappChecker = {
       console.log(`📤 Intento de envío ${attempt}/${maxRetries}...`);
       
       try {
-        // Buscar botón
-        const sendButton = document.querySelector('button[aria-label="Enviar"]');
+        // ESTRATEGIA 1: Buscar botón por aria-label exacto
+        let sendButton = document.querySelector('button[aria-label="Enviar"]');
+        console.log(`🔍 Estrategia 1 (aria-label="Enviar"): ${sendButton ? '✅ Encontrado' : '❌ No encontrado'}`);
+        
+        // ESTRATEGIA 2: Buscar por aria-label con variaciones de idioma
         if (!sendButton) {
-          console.warn(`❌ Intento ${attempt}: Botón de envío no encontrado`);
+          const ariaLabelSelectors = [
+            'button[aria-label="Send"]',
+            'button[aria-label="send"]',
+            'button[aria-label*="nviar"]', // Enviar en cualquier idioma
+            'button[data-testid="send"]'
+          ];
+          
+          for (let selector of ariaLabelSelectors) {
+            sendButton = document.querySelector(selector);
+            if (sendButton) {
+              console.log(`🔍 Estrategia 2 (${selector}): ✅ Encontrado`);
+              break;
+            }
+          }
+        }
+        
+        // ESTRATEGIA 3: Buscar botón por SVG de envío
+        if (!sendButton) {
+          console.log(`🔍 Estrategia 3: Buscando botón con SVG...`);
+          const buttons = document.querySelectorAll('button');
+          for (let btn of buttons) {
+            const svgIcon = btn.querySelector('svg');
+            // Buscar un botón que tenga SVG y esté cerca del compose box
+            const composeBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
+            if (svgIcon && composeBox && btn.offsetParent !== null) {
+              const isNearCompose = Math.abs(btn.getBoundingClientRect().top - composeBox.getBoundingClientRect().top) < 50;
+              if (isNearCompose && btn.getAttribute('aria-label')) {
+                sendButton = btn;
+                console.log(`🔍 Estrategia 3: ✅ Encontrado botón con SVG y aria-label`);
+                break;
+              }
+            }
+          }
+        }
+        
+        // ESTRATEGIA 4: Buscar último botón visible cerca del input
+        if (!sendButton) {
+          console.log(`🔍 Estrategia 4: Buscando botón por posición...`);
+          const composeBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
+          if (composeBox) {
+            const buttons = Array.from(document.querySelectorAll('button')).filter(btn => {
+              const rect = btn.getBoundingClientRect();
+              const composeRect = composeBox.getBoundingClientRect();
+              return rect.bottom >= composeRect.top - 10 && 
+                     rect.top <= composeRect.bottom + 10 &&
+                     btn.offsetParent !== null; // Visible
+            });
+            
+            if (buttons.length > 0) {
+              // Seleccionar el último botón (generalmente es el de envío)
+              sendButton = buttons[buttons.length - 1];
+              console.log(`🔍 Estrategia 4: ✅ Encontrado ${buttons.length} botones cerca del compose box`);
+            }
+          }
+        }
+        
+        if (!sendButton) {
+          console.warn(`❌ Intento ${attempt}: Botón de envío no encontrado en ninguna estrategia`);
           lastError = 'Botón de envío no encontrado';
           
           if (attempt < maxRetries) {
@@ -1164,21 +1436,28 @@ if (typeof chrome !== 'undefined' && chrome.runtime) {
       console.log('🚀 [CONTENT] Iniciando checker...');
       whatsappChecker.start();
       sendResponse({ status: 'iniciado' });
+      return true;
     } 
     else if (message.action === 'stopWhatsAppChecker') {
       console.log('🛑 [CONTENT] Deteniendo checker...');
       whatsappChecker.stop();
       sendResponse({ status: 'detenido' });
+      return true;
     }
     else if (message.action === 'runCycleFromAlarm') {
       console.log('⏰ [CONTENT] Ejecutando ciclo desde alarma del Service Worker');
       if (whatsappChecker.running) {
-        whatsappChecker.runCycle();
-        sendResponse({ status: 'ciclo_ejecutado' });
+        whatsappChecker.runCycle().then(() => {
+          sendResponse({ status: 'ciclo_ejecutado' });
+        }).catch((error) => {
+          console.error('❌ Error en ciclo:', error);
+          sendResponse({ status: 'error', error: error.message });
+        });
       } else {
         console.log('⚠️ Checker no está corriendo');
         sendResponse({ status: 'no_corriendo' });
       }
+      return true;
     }
   });
 } else {

@@ -110,7 +110,6 @@ function updateStatus() {
     }
   );
 }
-}
 
 // Escuchar mensajes del content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

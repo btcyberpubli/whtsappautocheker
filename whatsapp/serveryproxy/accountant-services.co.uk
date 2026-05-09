@@ -1,0 +1,187 @@
+# ============================================================================
+# NGINX REVERSE PROXY CONFIGURATION - accountant-services.co.uk
+# ============================================================================
+# IMPORTANTE: Los headers CORS se manejan SOLO en Express (server.js)
+# No agregar headers CORS adicionales en nginx para evitar duplicados
+# ============================================================================
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name accountant-services.co.uk www.accountant-services.co.uk;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name accountant-services.co.uk www.accountant-services.co.uk;
+
+    # ===== SSL CONFIGURATION =====
+    ssl_certificate /etc/letsencrypt/live/accountant-services.co.uk/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/accountant-services.co.uk/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # ===== PROCESS-CSV ENDPOINT (ANTES DE FRONTEND ESTATICO) =====
+    # Maneja uploads de archivos CSV con buffering OFF para datos grandes
+    location /process-csv {
+        proxy_pass http://127.0.0.1:5000/process-csv;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $server_name;
+        proxy_set_header Connection "";
+        proxy_request_buffering off;
+        proxy_buffering off;
+        client_max_body_size 50M;
+    }
+
+    # ===== FRONTEND WHATICKET (ARCHIVOS ESTATICOS) - DEBE IR ANTES DE /api/ =====
+    # Servir archivos est ticos del frontend con cach 
+    location / {
+        root /var/www/parser-whaticket;
+        try_files $uri $uri/ /index.html;
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600";
+    }
+
+    # ===== API ENDPOINTS ESPECIFICOS (ANTES DE /api/ GENERICO) =====
+    # IMPORTANTE: Estos deben ir ANTES que /api/ (gen rico) para que nginx matchee primero
+    
+    # GET /api/paneles - Obtener datos de paneles (GET solamente)
+    location /api/paneles {
+        proxy_pass http://127.0.0.1:3010/api/paneles;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # GET /api/paneles/stats - Estad sticas de paneles
+    location /api/paneles/stats {
+        proxy_pass http://127.0.0.1:3010/api/paneles/stats;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # GET /root/superbot1.0 - Endpoint principal del dashboard (GET solamente)
+    # CORS manejado por Express, NO agregar headers aqu 
+    location /root/superbot1.0 {
+        proxy_pass http://127.0.0.1:3010/root/superbot1.0;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # POST /api/panel-asignaciones - Guardar asignaciones de mensajes
+    # Requiere buffering OFF para requests POST
+    location /api/panel-asignaciones {
+        proxy_pass http://127.0.0.1:3010/api/panel-asignaciones;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # POST /api/actualizar-objetivo - Actualizar objetivo del panel
+    # Requiere buffering OFF para requests POST
+    location /api/actualizar-objetivo {
+        proxy_pass http://127.0.0.1:3010/api/actualizar-objetivo;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # ? NUEVO: POST /api/whatsapp-alert - Recibir alertas de caída de WhatsApp
+    location /api/whatsapp-alert {
+        proxy_pass http://127.0.0.1:3010/api/whatsapp-alert;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # ? NUEVO: GET /api/whatsapp-alerts - Obtener todas las alertas
+    location /api/whatsapp-alerts {
+        proxy_pass http://127.0.0.1:3010/api/whatsapp-alerts;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ===== API DASHBOARD GENERICO (DESPUES DE LOS ESPECIFICOS) =====
+    # Catchall para cualquier /api/* que no est  en los locations espec ficos arriba
+    # Redirige al puerto 3334
+    location /api/ {
+        proxy_pass http://127.0.0.1:3334;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # ===== OTROS ENDPOINTS =====
+    location /contacts/raw {
+        proxy_pass http://127.0.0.1:3067/contacts/raw;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /paneles {
+        proxy_pass http://127.0.0.1:3066;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /alerta {
+        proxy_pass http://127.0.0.1:3066;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /mapeos {
+        proxy_pass http://127.0.0.1:3067;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
