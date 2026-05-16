@@ -93,7 +93,7 @@ const whatsappChecker = {
   alertCooldown: new Map(), // Cooldown de 5 min entre alertas del mismo chat
   lastCycleTime: 0, // Controlar que no se ejecuten ciclos muy seguidos
   minCycleIntervalMs: 300000, // Mínimo 5 minutos entre ciclos
-  isProcessing: false // Flag para evitar ciclos concurrentes
+  isProcessing: false, // Flag para evitar ciclos concurrentes
 
   /**
    * Obtiene todos los chats de la lista
@@ -277,17 +277,25 @@ const whatsappChecker = {
     inputBox.focus();
     await this.sleep(getRandomDelay(200, 500)); // Pausa antes de escribir
     
-    let currentText = '';
-    
+    // ESTRATEGIA MEJORADA: Escribir con delay entre caracteres usando keys
     for (let i = 0; i < message.length; i++) {
       const char = message[i];
       
-      // Simular velocidad de tipeo variable (50-150ms por carácter)
+      // Simular velocidad de tipeo variable (40-120ms por carácter)
       const typeSpeed = getRandomDelay(40, 120);
       await this.sleep(typeSpeed);
       
-      currentText += char;
-      inputBox.textContent = currentText;
+      // Usar execCommand para insertar el carácter de forma nativa
+      // Esto asegura que WhatsApp procese el evento correctamente
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(inputBox);
+      range.collapse(false); // Colapsar al final
+      selection.removeAllRanges();
+      selection.addRange(range);
+      
+      // Insertar el carácter
+      document.execCommand('insertText', false, char);
       
       // Disparar evento de input para que WhatsApp lo detecte
       const inputEvent = new InputEvent('input', {
@@ -542,32 +550,216 @@ const whatsappChecker = {
   },
 
   /**
-   * Verifica si el mensaje fue leído (doble tilde)
+   * Busca NUESTRO último mensaje enviado (el que acabamos de mandar)
    */
-  checkIfRead() {
-    // Buscamos el SVG con data-icon="status-dblcheck" (doble tilde = leído)
-    const dblCheckIcon = document.querySelector('[data-icon="status-dblcheck"]');
-    
-    if (dblCheckIcon) {
-      console.log('✅ Mensaje LEÍDO (doble tilde azul)');
-      return true;
-    } else {
-      console.log('❌ Mensaje NO LEÍDO (sin doble tilde)');
-      return false;
+  getOurLastMessage() {
+    try {
+      // En WhatsApp Web, nuestros mensajes están en el lado derecho (after/)
+      // Buscar todos los contenedores de mensaje
+      const allMessages = document.querySelectorAll('[data-testid="message-pane-container"] [role="gridcell"], [data-testid="msg-container"]');
+      
+      if (allMessages.length > 0) {
+        // El último mensaje debería ser el nuestro
+        const lastMsg = allMessages[allMessages.length - 1];
+        
+        // Verificar que sea nuestro buscando clases típicas (after/ o similar)
+        const classes = lastMsg.className;
+        const isOurs = classes.includes('after/') || lastMsg.closest('[style*="margin-left"]') || lastMsg.getAttribute('data-own-message') === 'true';
+        
+        if (isOurs || allMessages.length === 1) {
+          return lastMsg;
+        }
+      }
+      
+      // MÉTODO 2: Buscar por estructura específica de WhatsApp (nuestros mensajes a la derecha)
+      const messagePane = document.querySelector('[data-testid="message-pane-container"]');
+      if (messagePane) {
+        const cells = messagePane.querySelectorAll('[role="gridcell"]');
+        if (cells.length > 0) {
+          return cells[cells.length - 1];
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error buscando nuestro mensaje:', error);
+      return null;
     }
+  },
+
+  /**
+   * Obtiene el estado del icono de nuestro mensaje (undefined/single/double)
+   */
+  getOurMessageStatus() {
+    const ourMsg = this.getOurLastMessage();
+    if (!ourMsg) {
+      console.log('⚠️ No se encontró nuestro mensaje');
+      return 'not_found';
+    }
+
+    // Buscar icono de estado dentro de nuestro mensaje
+    const dblCheckIcon = ourMsg.querySelector('[data-icon="status-dblcheck"]');
+    const singleCheckIcon = ourMsg.querySelector('[data-icon="status-check"]');
+
+    if (dblCheckIcon) {
+      console.log('✅ Nuestro mensaje: DOBLE TILDE (entregado y leído)');
+      return 'double';
+    } else if (singleCheckIcon) {
+      console.log('⚠️ Nuestro mensaje: SINGLE TILDE (enviado, no entregado)');
+      return 'single';
+    } else {
+      console.log('⏳ Nuestro mensaje: SIN TILDE (en proceso)');
+      return 'none';
+    }
+  },
+
+  /**
+   * Verifica lectura en modo progresivo (2s, +5s, +10s)
+   */
+  async checkDeliveryProgressive(chatName, chatId, message) {
+    console.log(`\n📊 VERIFICACIÓN PROGRESIVA DE ENTREGA para ${chatName}:`);
+    
+    // FASE 1: Esperar 2 segundos y verificar
+    console.log('⏱️ FASE 1: Esperando 2 segundos...');
+    await this.sleep(2000);
+    
+    let status = this.getOurMessageStatus();
+    console.log(`   Estado: ${status}`);
+    
+    if (status === 'double') {
+      console.log(`✅ LÍNEA ACTIVA - Mensaje entregado en fase 1`);
+      return { read: true, alertSent: false };
+    }
+    
+    if (status === 'single') {
+      // FASE 2: Esperar 5 segundos más (total 7s) y verificar nuevamente
+      console.log('⏱️ FASE 2: Single check detectado. Esperando 5 segundos más...');
+      await this.sleep(5000);
+      
+      status = this.getOurMessageStatus();
+      console.log(`   Estado: ${status}`);
+      
+      if (status === 'double') {
+        console.log(`✅ LÍNEA ACTIVA - Mensaje entregado en fase 2`);
+        return { read: true, alertSent: false };
+      }
+      
+      if (status === 'single') {
+        // FASE 3: Esperar 10 segundos más (total 17s) verificación final
+        console.log('⏱️ FASE 3: Sigue con single. Esperando 10 segundos más (total 17s)...');
+        await this.sleep(10000);
+        
+        status = this.getOurMessageStatus();
+        console.log(`   Estado: ${status}`);
+        
+        if (status === 'single') {
+          // ALERTA: Después de 17 segundos sigue con single tilde
+          console.log(`🚨 ALERTA DEFINITIVA: Single tilde persistente después de 17 segundos`);
+          
+          const alertData = {
+            type: "whatsapp-downline",
+            contactName: chatName || "Desconocido",
+            chatId: chatId || "unknown@c.us",
+            lastMessage: message || "Mensaje de prueba",
+            detectedAt: new Date().toISOString(),
+            severity: "high",
+            source: "whatsapp-extension"
+          };
+
+          const serverResponse = await this.sendAlertToServer(alertData);
+          
+          if (serverResponse && serverResponse.success) {
+            console.log(`✅ Alerta enviada - ID: ${serverResponse.alertId}`);
+            
+            // Guardar en storage local
+            const alertInfo = {
+              ...alertData,
+              alertId: serverResponse.alertId,
+              isDuplicate: serverResponse.isDuplicate,
+              reportedAt: new Date().toISOString()
+            };
+            
+            chrome.storage.local.get('sentAlerts', (result) => {
+              const sentAlerts = result.sentAlerts || [];
+              sentAlerts.push(alertInfo);
+              chrome.storage.local.set({ sentAlerts });
+              console.log('💾 Alerta guardada en storage. Total:', sentAlerts.length);
+            });
+            
+            return { read: false, alertSent: true };
+          }
+          
+          return { read: false, alertSent: false };
+        } else if (status === 'double') {
+          console.log(`✅ LÍNEA ACTIVA - Entregado finalmente en fase 3`);
+          return { read: true, alertSent: false };
+        }
+      }
+    }
+    
+    return { read: false, alertSent: false };
   },
 
   /**
    * Verifica si el mensaje tiene un solo checkmark (enviado pero NO entregado)
    */
   checkSingleCheck() {
-    // data-icon="status-check" = un solo checkmark (enviado pero no entregado)
-    const singleCheckIcon = document.querySelector('[data-icon="status-check"]');
+    // 🔍 BÚSQUEDA AGRESIVA: Revisar TODOS los iconos de estado disponibles
     
-    if (singleCheckIcon) {
-      console.log('⚠️ Mensaje con SINGLE CHECK (enviado, no entregado)');
-      return true;
+    // MÉTODO 1: Buscar en todos los SVG con data-icon (más exhaustivo)
+    const allSvgs = document.querySelectorAll('svg[data-icon]');
+    if (allSvgs.length > 0) {
+      // Invertir para buscar desde el más reciente (último enviado)
+      for (let i = allSvgs.length - 1; i >= 0; i--) {
+        const svg = allSvgs[i];
+        const icon = svg.getAttribute('data-icon');
+        
+        // Si encontramos un status-check, verificar que NO sea status-dblcheck
+        if (icon === 'status-check') {
+          // Mirar el siguiente para asegurarse de que no haya doble tilde
+          const nextSvg = allSvgs[i + 1];
+          const nextIcon = nextSvg ? nextSvg.getAttribute('data-icon') : null;
+          
+          if (nextIcon !== 'status-dblcheck') {
+            console.log('⚠️ Mensaje con SINGLE CHECK (enviado, no entregado) - DETECTADO');
+            return true;
+          }
+        }
+      }
     }
+    
+    // MÉTODO 2: Buscar por data-testid de mensaje (alternativo)
+    const messageContainers = document.querySelectorAll('[data-testid="message-container"], [role="img"][data-testid*="msg"]');
+    if (messageContainers.length > 0) {
+      // Mirar el último mensaje
+      const lastMsg = messageContainers[messageContainers.length - 1];
+      const singleCheckIcon = lastMsg.querySelector('[data-icon="status-check"]');
+      const dblCheckIcon = lastMsg.querySelector('[data-icon="status-dblcheck"]');
+      
+      if (singleCheckIcon && !dblCheckIcon) {
+        console.log('⚠️ Mensaje con SINGLE CHECK - Detectado en contenedor');
+        return true;
+      }
+    }
+    
+    // MÉTODO 3: Buscar en el span de tiempo más reciente (confiable)
+    const timeSpans = document.querySelectorAll('[data-testid="msg-time"]');
+    if (timeSpans.length > 0) {
+      const lastTimeSpan = timeSpans[timeSpans.length - 1];
+      const container = lastTimeSpan.closest('[role="link"], [role="gridcell"], div');
+      
+      if (container) {
+        // Buscar todos los SVGs dentro del contenedor
+        const containerSvgs = container.querySelectorAll('svg[data-icon]');
+        for (let svg of containerSvgs) {
+          if (svg.getAttribute('data-icon') === 'status-check') {
+            console.log('⚠️ Mensaje con SINGLE CHECK - Detectado por timestamp');
+            return true;
+          }
+        }
+      }
+    }
+    
     return false;
   },
 
@@ -859,58 +1051,32 @@ const whatsappChecker = {
 
       console.log(`📤 Mensaje enviado: "${message}" → ${chatName} (${chatId})`);
 
-      // Esperar a verificar lectura (máximo 30 segundos, pero se para si se lee antes)
-      console.log('⏳ Verificando lectura/entrega en tiempo real...');
-      let isRead = false;
-      let hasSingleCheck = false;
-      let alertSent = false;
-      const maxWaitTime = 30000; // 30 segundos máximo
-      const checkInterval = 1000; // Verificar cada 1 segundo
-      let elapsedTime = 0;
-
-      while (elapsedTime < maxWaitTime) {
-        await this.sleep(checkInterval);
-        isRead = this.checkIfRead();
-        
-        // Detectar single check (solo si no se ha enviado alerta aún)
-        if (!alertSent && !hasSingleCheck) {
-          hasSingleCheck = this.checkSingleCheck();
-          if (hasSingleCheck) {
-            console.log(`🚨 SINGLE CHECK DETECTADO en ${chatName} (${chatId})`);
-            // Enviar alerta
-            alertSent = await this.detectAndReportSingleCheck(
-              chatName,
-              message,
-              chatId
-            );
-            if (alertSent) {
-              console.log(`✅ Alerta enviada para ${chatName} (${chatId})`);
-              await this.closeChat();
-              return { 
-                name: chatName, 
-                success: true, 
-                read: false, 
-                alertSent: true,
-                reason: 'Single check detectado - No llega',
-                chatId: chatId
-              };
-            }
-          }
-        }
-
-        elapsedTime += checkInterval;
-
-        if (isRead) {
-          console.log(`✅ ${chatName} - LÍNEA ACTIVA (leído en ${elapsedTime / 1000}s) - ${chatId}`);
-          await this.closeChat();
-          return { name: chatName, success: true, read: true, chatId: chatId };
-        }
+      // 🆕 VERIFICACIÓN PROGRESIVA: 2s + 5s + 10s (total 17s máximo)
+      const deliveryResult = await this.checkDeliveryProgressive(chatName, chatId, message);
+      
+      if (deliveryResult.alertSent) {
+        // Alerta enviada - línea caída detectada
+        console.log(`🚨 ${chatName} - LÍNEA CAÍDA (alerta enviada) - ${chatId}`);
+        await this.closeChat();
+        return { 
+          name: chatName, 
+          success: true, 
+          read: false, 
+          alertSent: true,
+          reason: 'Single check persistente - No llega',
+          chatId: chatId
+        };
+      } else if (deliveryResult.read) {
+        // Doble tilde - línea activa
+        console.log(`✅ ${chatName} - LÍNEA ACTIVA (entregado) - ${chatId}`);
+        await this.closeChat();
+        return { name: chatName, success: true, read: true, chatId: chatId };
+      } else {
+        // No se pudo determinar - timeout o sin tilde
+        console.log(`⚠️ ${chatName} - ESTADO INDEFINIDO (posible error en detección) - ${chatId}`);
+        await this.closeChat();
+        return { name: chatName, success: true, read: false, registered: true, chatId: chatId };
       }
-
-      // Si no se leyó después de esperar, registrar pero continuar
-      console.log(`⚠️ ${chatName} - MENSAJE NO VERIFICADO (tiempo agotado) - ${chatId} - Continuando...`);
-      await this.closeChat();
-      return { name: chatName, success: true, read: false, registered: true, chatId: chatId };
 
     } catch (error) {
       console.error(`❌ Error procesando ${chatName}:`, error);
@@ -1122,31 +1288,62 @@ const whatsappChecker = {
 console.log('✅ Content script listo para recibir comandos');
 
 // Verificar que chrome.runtime esté disponible
-if (typeof chrome !== 'undefined' && chrome.runtime) {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('📨 [CONTENT] Mensaje recibido:', message.action);
+console.log('DEBUG: Verificando chrome.runtime...');
+console.log('typeof chrome:', typeof chrome);
+console.log('chrome.runtime disponible:', chrome && chrome.runtime ? 'SÍ' : 'NO');
 
-    if (message.action === 'startWhatsAppChecker') {
-      console.log('🚀 [CONTENT] Iniciando checker...');
-      whatsappChecker.start();
-      sendResponse({ status: 'iniciado' });
-    } 
-    else if (message.action === 'stopWhatsAppChecker') {
-      console.log('🛑 [CONTENT] Deteniendo checker...');
-      whatsappChecker.stop();
-      sendResponse({ status: 'detenido' });
-    }
-    else if (message.action === 'runCycleFromAlarm') {
-      console.log('⏰ [CONTENT] Ejecutando ciclo desde alarma del Service Worker');
-      if (whatsappChecker.running) {
-        whatsappChecker.runCycle();
-        sendResponse({ status: 'ciclo_ejecutado' });
-      } else {
-        console.log('⚠️ Checker no está corriendo');
-        sendResponse({ status: 'no_corriendo' });
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  console.log('DEBUG: Registrando message listener...');
+  try {
+    const listener = (message, sender, sendResponse) => {
+      console.log('📨 [CONTENT] Mensaje recibido:', message);
+      console.log('📨 [CONTENT] Action:', message.action);
+      
+      try {
+        if (message.action === 'startWhatsAppChecker') {
+          console.log('🚀 [CONTENT] Iniciando checker...');
+          whatsappChecker.start();
+          sendResponse({ status: 'iniciado' });
+        } 
+        else if (message.action === 'stopWhatsAppChecker') {
+          console.log('🛑 [CONTENT] Deteniendo checker...');
+          whatsappChecker.stop();
+          sendResponse({ status: 'detenido' });
+        }
+        else if (message.action === 'runCycleFromAlarm') {
+          console.log('⏰ [CONTENT] Ejecutando ciclo desde alarma del Service Worker');
+          // 🛡️ VERIFICACIÓN: Sincronizar con storage (el estado verdadero)
+          chrome.storage.local.get('whatsappAutoRunning', (result) => {
+            if (result.whatsappAutoRunning) {
+              // Asegurar que running esté en true
+              whatsappChecker.running = true;
+              console.log('✅ Estado sincronizado: running = true');
+              
+              // Ejecutar ciclo
+              whatsappChecker.runCycle();
+              sendResponse({ status: 'ciclo_ejecutado' });
+            } else {
+              console.log('⚠️ Auto-checker está desactivado en storage, ignorando ciclo');
+              sendResponse({ status: 'no_corriendo' });
+            }
+          });
+        } else {
+          console.warn('⚠️ Acción desconocida:', message.action);
+          sendResponse({ status: 'unknown_action' });
+        }
+      } catch (error) {
+        console.error('❌ Error procesando mensaje:', error);
+        sendResponse({ status: 'error', error: error.message });
       }
-    }
-  });
+      
+      return true; // Indica que la respuesta es asincrónica
+    };
+    
+    chrome.runtime.onMessage.addListener(listener);
+    console.log('✅ Message listener registrado correctamente');
+  } catch (error) {
+    console.error('❌ Error registrando listener:', error);
+  }
 } else {
   console.warn('⚠️ chrome.runtime no disponible - Extension no cargada correctamente');
 }

@@ -133,18 +133,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     updateStatus();
   }
 });
-}
-
-// Escuchar mensajes del content script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'updateUI') {
-    console.log('📊 Actualizando UI:', message);
-    chrome.storage.local.set({
-      scannedChats: message.scanned,
-      unreadLines: message.unread,
-      failedChats: message.failedChats || [],
-      nextRun: message.nextRun || 'N/A'
-    });
-    updateStatus();
-  }
-});

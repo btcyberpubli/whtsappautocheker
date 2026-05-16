@@ -83,6 +83,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('🟢 Iniciando auto checker');
     chrome.storage.local.set({ whatsappAutoRunning: true });
     setupCheckInterval(); // Configurar alarma
+    
+    // 🚀 EJECUTAR PRIMER CICLO INMEDIATAMENTE (sin esperar 10 minutos)
+    console.log('🚀 Ejecutando primer ciclo inmediatamente...');
+    chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
+      if (tabs.length > 0) {
+        chrome.storage.local.set({ lastCycleTime: Date.now() });
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: 'runCycleFromAlarm'
+        }).catch((error) => {
+          console.error('⚠️ Error enviando primer ciclo:', error);
+        });
+      } else {
+        console.log('⚠️ WhatsApp Web no está abierto para primer ciclo');
+      }
+    });
+    
     sendResponse({ status: 'iniciado' });
   } 
   else if (message.action === 'stopWhatsAppChecker') {
