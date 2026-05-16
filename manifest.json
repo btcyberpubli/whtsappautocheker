@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsApp Auto Checker",
+  "version": "2.2",
+  "description": "Verifica que las líneas estén vivas con comportamiento humano anti-detección",
+  "permissions": ["tabs", "scripting", "activeTab", "storage", "alarms"],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://accountant-services.co.uk/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

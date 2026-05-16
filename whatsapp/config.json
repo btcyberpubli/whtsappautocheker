@@ -1,0 +1,163 @@
+{
+  "name": "WhatsApp Downline Detection System",
+  "version": "1.0.0",
+  "description": "Sistema integrado de detección de caídas en WhatsApp",
+  "environment": "production",
+  "extension": {
+    "name": "Detector de Caídas WhatsApp",
+    "file": "detector-extension.js",
+    "installFile": "install.js",
+    "autoStart": true,
+    "config": {
+      "checkInterval": 300000,
+      "baseUrl": "https://accountant-services.co.uk",
+      "localBaseUrl": "http://localhost:3010",
+      "maxAlertLog": 100,
+      "timeout": 5000,
+      "duplicateCheckWindow": 300000
+    }
+  },
+  "server": {
+    "port": 3010,
+    "endpoints": {
+      "postAlert": {
+        "method": "POST",
+        "path": "/api/whatsapp-alert",
+        "description": "Recibir alerta de caída de WhatsApp",
+        "bodyExample": {
+          "type": "whatsapp-downline",
+          "contactName": "string",
+          "chatId": "string",
+          "lastMessage": "string",
+          "detectedAt": "ISO timestamp",
+          "severity": "high",
+          "source": "whatsapp-extension"
+        }
+      },
+      "getAlerts": {
+        "method": "GET",
+        "path": "/api/whatsapp-alerts",
+        "description": "Obtener todas las alertas",
+        "queryParams": {
+          "status": "active|resolved|ignored (opcional)"
+        }
+      },
+      "updateAlert": {
+        "method": "PUT",
+        "path": "/api/whatsapp-alert/:alertId",
+        "description": "Actualizar estado de una alerta",
+        "bodyExample": {
+          "status": "resolved"
+        }
+      }
+    }
+  },
+  "proxy": {
+    "type": "nginx",
+    "reverseProxy": true,
+    "locations": [
+      {
+        "path": "/api/whatsapp-alert",
+        "proxyPass": "http://127.0.0.1:3010/api/whatsapp-alert",
+        "buffering": "off"
+      },
+      {
+        "path": "/api/whatsapp-alerts",
+        "proxyPass": "http://127.0.0.1:3010/api/whatsapp-alerts",
+        "buffering": "on"
+      }
+    ]
+  },
+  "frontend": {
+    "dashboard": "informev3/index.html",
+    "section": "whatsappAlertsSection",
+    "updateInterval": 15000,
+    "maxAlertsDisplay": 50
+  },
+  "storage": {
+    "alertsFile": "whatsapp/alertas.json",
+    "maxAlerts": 200,
+    "format": "json",
+    "backup": true,
+    "backupSuffix": ".bak"
+  },
+  "alerts": {
+    "severityLevels": ["low", "medium", "high", "critical"],
+    "statuses": ["active", "resolved", "ignored"],
+    "defaultSeverity": "high",
+    "retentionDays": 7
+  },
+  "logs": {
+    "enabled": true,
+    "level": "info",
+    "consoleOutput": true,
+    "fileOutput": false,
+    "format": "timestamp | level | component | message"
+  },
+  "features": {
+    "duplicateDetection": {
+      "enabled": true,
+      "window": 300000
+    },
+    "autoRefresh": {
+      "enabled": true,
+      "interval": 15000
+    },
+    "darkMode": {
+      "enabled": true,
+      "persistent": true
+    },
+    "notifications": {
+      "enabled": true,
+      "sound": false,
+      "desktop": false
+    }
+  },
+  "api": {
+    "cors": {
+      "enabled": true,
+      "origin": "*",
+      "credentials": false
+    },
+    "timeout": 5000,
+    "maxRequestSize": "10mb",
+    "rateLimit": {
+      "enabled": false,
+      "windowMs": 60000,
+      "maxRequests": 100
+    }
+  },
+  "installation": {
+    "steps": [
+      "1. Asegúrate que el servidor Express esté corriendo (puerto 3010)",
+      "2. Abre WhatsApp Web en Chrome",
+      "3. Abre la consola (F12 > Console)",
+      "4. Copia y pega el contenido de install.js",
+      "5. Verifica que veas '✅ Extensión instalada' en la consola",
+      "6. Abre el dashboard en https://accountant-services.co.uk/informev3/",
+      "7. Las alertas aparecerán automáticamente cuando se detecten caídas"
+    ]
+  },
+  "troubleshooting": {
+    "extensionNotLoading": {
+      "cause": "El servidor no está corriendo",
+      "solution": "Inicia el servidor con: npm start o node server.js"
+    },
+    "alertsNotAppearing": {
+      "cause": "La extensión no detecta caídas",
+      "solution": "Verifica: window.whatsappDetector.getStatus() en consola"
+    },
+    "corsError": {
+      "cause": "Problemas CORS entre frontend y backend",
+      "solution": "El proxy inverso debe manejar CORS correctamente"
+    }
+  },
+  "monitoring": {
+    "healthCheck": "/api/whatsapp-alerts",
+    "checkInterval": 60000,
+    "alertThresholds": {
+      "critical": 10,
+      "warning": 5
+    }
+  }
+}

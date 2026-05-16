@@ -1,0 +1,422 @@
+{
+  "info": {
+    "_postman_id": "whatsapp-alerts-api",
+    "name": "WhatsApp Alerts API - Superbot",
+    "description": "Colección para probar los endpoints de alertas de WhatsApp",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "POST - Recibir Alerta",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response tiene success = true', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "});",
+              "",
+              "pm.test('Response tiene alertId', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('alertId');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"whatsapp-downline\",\n  \"contactName\": \"Juan Pérez\",\n  \"chatId\": \"chat-{{$timestamp}}\",\n  \"lastMessage\": \"Última actualización fue hace 2 horas\",\n  \"detectedAt\": \"{{$timestamp}}\",\n  \"severity\": \"high\",\n  \"source\": \"whatsapp-extension\"\n}"
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alert",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alert"
+          ]
+        },
+        "description": "Envía una alerta de caída de WhatsApp al servidor"
+      },
+      "response": []
+    },
+    {
+      "name": "POST - Alerta Duplicada (Test)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Detecta alerta duplicada', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.isDuplicate).to.eql(true);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"whatsapp-downline\",\n  \"contactName\": \"Juan Pérez\",\n  \"chatId\": \"chat-duplicate-test\",\n  \"lastMessage\": \"Este es un duplicado\",\n  \"detectedAt\": \"{{$timestamp}}\",\n  \"severity\": \"high\",\n  \"source\": \"whatsapp-extension\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alert",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alert"
+          ]
+        },
+        "description": "Intenta enviar una alerta duplicada (mismo chatId)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST - Alerta María García",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"whatsapp-downline\",\n  \"contactName\": \"María García\",\n  \"chatId\": \"chat-maria-{{$timestamp}}\",\n  \"lastMessage\": \"Datos de la campaña X\",\n  \"detectedAt\": \"{{$timestamp}}\",\n  \"severity\": \"high\",\n  \"source\": \"whatsapp-extension\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alert",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alert"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "POST - Alerta Carlos López",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"whatsapp-downline\",\n  \"contactName\": \"Carlos López\",\n  \"chatId\": \"chat-carlos-{{$timestamp}}\",\n  \"lastMessage\": \"¿Qué pasó con el pago?\",\n  \"detectedAt\": \"{{$timestamp}}\",\n  \"severity\": \"high\",\n  \"source\": \"whatsapp-extension\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alert",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alert"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "GET - Obtener Todas las Alertas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code es 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response tiene alerts array', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('alerts');",
+              "    pm.expect(jsonData.alerts).to.be.an('array');",
+              "});",
+              "",
+              "pm.test('Muestra count correcto', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('count');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alerts",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alerts"
+          ]
+        },
+        "description": "Obtiene todas las alertas guardadas"
+      },
+      "response": []
+    },
+    {
+      "name": "GET - Obtener Alertas Activas",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alerts?status=active",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alerts"
+          ],
+          "query": [
+            {
+              "key": "status",
+              "value": "active"
+            }
+          ]
+        },
+        "description": "Obtiene solo las alertas activas"
+      },
+      "response": []
+    },
+    {
+      "name": "GET - Obtener Alertas Resueltas",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alerts?status=resolved",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alerts"
+          ],
+          "query": [
+            {
+              "key": "status",
+              "value": "resolved"
+            }
+          ]
+        },
+        "description": "Obtiene solo las alertas resueltas"
+      },
+      "response": []
+    },
+    {
+      "name": "PUT - Resolver Alerta",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Primero obtener una alerta para saber su ID",
+              "pm.sendRequest('http://localhost:3010/api/whatsapp-alerts', function (err, response) {",
+              "    if (!err && response.json().alerts.length > 0) {",
+              "        var alertId = response.json().alerts[0].id;",
+              "        pm.environment.set('alertId', alertId);",
+              "        console.log('AlertId obtenido:', alertId);",
+              "    }",
+              "});"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code es 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Alerta marcada como resolved', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"resolved\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alert/:alertId",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alert",
+            ":alertId"
+          ],
+          "variable": [
+            {
+              "key": "alertId",
+              "value": "alert-1234567890-abc123",
+              "description": "Reemplaza con un ID real de alerta"
+            }
+          ]
+        },
+        "description": "Marca una alerta como resuelta. IMPORTANTE: Reemplaza :alertId con un ID real de la lista GET"
+      },
+      "response": []
+    },
+    {
+      "name": "PUT - Ignorar Alerta",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"ignored\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alert/:alertId",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alert",
+            ":alertId"
+          ],
+          "variable": [
+            {
+              "key": "alertId",
+              "value": "alert-1234567890-abc123",
+              "description": "Reemplaza con un ID real de alerta"
+            }
+          ]
+        },
+        "description": "Marca una alerta como ignorada"
+      },
+      "response": []
+    },
+    {
+      "name": "POST - Alerta Inválida (Sin contactName)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Rechaza request inválido', function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"whatsapp-downline\",\n  \"chatId\": \"chat-test\",\n  \"lastMessage\": \"Esto va a fallar\",\n  \"detectedAt\": \"{{$timestamp}}\",\n  \"severity\": \"high\",\n  \"source\": \"test\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:3010/api/whatsapp-alert",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3010",
+          "path": [
+            "api",
+            "whatsapp-alert"
+          ]
+        },
+        "description": "Test de validación - debería fallar porque falta contactName"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3010"
+    },
+    {
+      "key": "alertId",
+      "value": "alert-1234567890-abc123"
+    }
+  ]
+}
