@@ -631,9 +631,11 @@ const whatsappChecker = {
       return { read: true, alertSent: false };
     }
     
-    if (status === 'single') {
+    // Tratar 'not_found' y 'single' igual: ambos son problemas potenciales
+    if (status === 'single' || status === 'not_found') {
       // FASE 2: Esperar 5 segundos más (total 7s) y verificar nuevamente
-      console.log('⏱️ FASE 2: Single check detectado. Esperando 5 segundos más...');
+      const statusType = status === 'not_found' ? 'Mensaje no encontrado' : 'Single check detectado';
+      console.log(`⏱️ FASE 2: ${statusType}. Esperando 5 segundos más...`);
       await this.sleep(5000);
       
       status = this.getOurMessageStatus();
@@ -644,17 +646,20 @@ const whatsappChecker = {
         return { read: true, alertSent: false };
       }
       
-      if (status === 'single') {
+      if (status === 'single' || status === 'not_found') {
         // FASE 3: Esperar 10 segundos más (total 17s) verificación final
-        console.log('⏱️ FASE 3: Sigue con single. Esperando 10 segundos más (total 17s)...');
+        console.log('⏱️ FASE 3: Sigue problemático. Esperando 10 segundos más (total 17s)...');
         await this.sleep(10000);
         
         status = this.getOurMessageStatus();
         console.log(`   Estado: ${status}`);
         
-        if (status === 'single') {
-          // ALERTA: Después de 17 segundos sigue con single tilde
-          console.log(`🚨 ALERTA DEFINITIVA: Single tilde persistente después de 17 segundos`);
+        if (status === 'single' || status === 'not_found') {
+          // ALERTA: Después de 17 segundos persiste el problema
+          const alertReason = status === 'not_found' 
+            ? 'Mensaje no encontrado después de 17 segundos'
+            : 'Single tilde persistente después de 17 segundos';
+          console.log(`🚨 ALERTA DEFINITIVA: ${alertReason}`);
           
           const alertData = {
             type: "whatsapp-downline",
