@@ -27,19 +27,40 @@ const upload = multer({ storage: multer.memoryStorage() });
 // This ensures /process-csv is handled by our route, not by static file handler
 
 // Helper: Obtener fecha en zona horaria de Argentina (UTC-3)
-function getArgentinaDate(utcDate = new Date()) {
-  const offsetMs = 3 * 60 * 60 * 1000; // 3 horas en milisegundos
-  const arDate = new Date(utcDate.getTime() - offsetMs);
-  return arDate.toISOString().split('T')[0];
+// Las fechas del CSV ya están en hora de Argentina, NO en UTC
+function getArgentinaDate(dateObj = null) {
+  let date;
+  
+  if (dateObj) {
+    // Si se pasa una fecha, se asume que está en UTC
+    // Se le restan 3 horas para convertir a Argentina
+    const offsetMs = 3 * 60 * 60 * 1000;
+    date = new Date(dateObj.getTime() - offsetMs);
+  } else {
+    // Si no se pasa fecha, usar ahora en Argentina
+    // Primero obtenemos UTC, luego restamos 3 horas
+    const utcNow = new Date();
+    const offsetMs = 3 * 60 * 60 * 1000;
+    date = new Date(utcNow.getTime() - offsetMs);
+  }
+  
+  return date.toISOString().split('T')[0];
 }
 
 // Helper: Parsear fecha del CSV (formato: "2026-05-11 11:43:11")
+// Las fechas del CSV YA están en zona horaria de Argentina, no en UTC
 function parseCSVDate(dateStr) {
   if (!dateStr) return null;
-  // Reemplazar espacio con T para que sea ISO 8601
-  const isoStr = dateStr.replace(' ', 'T');
-  const date = new Date(isoStr);
-  return isNaN(date.getTime()) ? null : date;
+  
+  // Formato: "2026-05-11 11:43:11" - ya es hora de Argentina
+  // Extraer solo la fecha YYYY-MM-DD
+  const datePart = dateStr.split(' ')[0];
+  
+  if (!datePart || !/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    return null;
+  }
+  
+  return datePart; // Retornar directamente como string YYYY-MM-DD
 }
 
 /**
@@ -60,14 +81,12 @@ function processConversationData(rows) {
     
     // Parsear fecha con formato CSV: "2026-05-11 11:43:11"
     const createdAtStr = row.createdAt || '';
-    const createdDate = parseCSVDate(createdAtStr);
+    const dateKey = parseCSVDate(createdAtStr); // Retorna "2026-05-11" directamente
     
-    if (!createdDate) {
+    if (!dateKey) {
       return; // Saltar filas con fecha inválida
     }
 
-    // Extraer la fecha sin hora (YYYY-MM-DD) en zona horaria de Argentina (UTC-3)
-    const dateKey = getArgentinaDate(createdDate);
     allDatesFound.add(dateKey);
     
     // SOLO procesar datos de HOY
@@ -85,7 +104,7 @@ function processConversationData(rows) {
     
     // Log de cada fila procesada (primeras 5 filas)
     if (totalRowsWithToday <= 5) {
-      console.log(`   Row ${totalRowsWithToday}: tags="${tags}" hasTag=${hasTag}`);
+      console.log(`   Row ${totalRowsWithToday}: fecha=${dateKey}, tags="${tags}" hasTag=${hasTag}`);
     }
 
     // Inicializar panel para hoy si no existe
