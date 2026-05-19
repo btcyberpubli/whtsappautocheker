@@ -51,8 +51,13 @@ function processConversationData(rows) {
   const today = getArgentinaDate();
   const dataToday = {}; // Agrupar paneles de HOY
   const allDatesFound = new Set(); // Todas las fechas del CSV
+  
+  let totalRowsWithToday = 0;
+  let totalRowsProcessed = 0;
 
-  rows.forEach(row => {
+  rows.forEach((row, rowIndex) => {
+    totalRowsProcessed++;
+    
     // Parsear fecha con formato CSV: "2026-05-11 11:43:11"
     const createdAtStr = row.createdAt || '';
     const createdDate = parseCSVDate(createdAtStr);
@@ -70,9 +75,18 @@ function processConversationData(rows) {
       return;
     }
     
+    totalRowsWithToday++;
+    
     const department = (row.department || 'SIN_PANEL').trim();
     const connection = (row.connection || 'SIN_CAMPAÑA').trim();
     const tags = (row.conversationTags || '').trim();
+    
+    const hasTag = tags && tags !== '' && tags !== 'nan';
+    
+    // Log de cada fila procesada (primeras 5 filas)
+    if (totalRowsWithToday <= 5) {
+      console.log(`   Row ${totalRowsWithToday}: tags="${tags}" hasTag=${hasTag}`);
+    }
 
     // Inicializar panel para hoy si no existe
     if (!dataToday[department]) {
@@ -101,17 +115,26 @@ function processConversationData(rows) {
     dataToday[department].campañas[connection].mensajes += 1;
 
     // Contar carga si tiene tags
-    if (tags && tags !== '' && tags !== 'nan') {
+    if (hasTag) {
       dataToday[department].cargas_hoy += 1;
       dataToday[department].campañas[connection].cargas += 1;
     }
   });
+  
+  // Log de debugging
+  console.log(`\n🔍 Debug processConversationData:`);
+  console.log(`   Total rows en CSV: ${totalRowsProcessed}`);
+  console.log(`   Rows con fecha hoy (${today}): ${totalRowsWithToday}`);
+  console.log(`   Paneles procesados: ${Object.keys(dataToday).length}`);
 
   // Convertir a array y calcular porcentajes
   const panelsToday = Object.values(dataToday).map((panel, index) => {
     const total = panel.total_mensajes_hoy;
     const cargas = panel.cargas_hoy;
     const porcentaje = total > 0 ? ((cargas / total) * 100).toFixed(1) : '0.0';
+    
+    console.log(`   [${panel.panel}] Total: ${total}, Cargas: ${cargas}, %: ${porcentaje}%`);
+    
     
     return {
       id: '',
@@ -178,8 +201,16 @@ app.post('/process-csv', upload.single('file'), (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    // Eliminar BOM si existe
+    let csvContent = req.file.buffer.toString('utf-8');
+    if (csvContent.charCodeAt(0) === 0xFEFF) {
+      csvContent = csvContent.slice(1);
+    }
+    
+    console.log(`📥 CSV recibido: ${req.file.originalname}, tamaño: ${req.file.buffer.length} bytes`);
+    
     const rows = [];
-    const stream = Readable.from([req.file.buffer.toString('utf-8')]);
+    const stream = Readable.from([csvContent]);
     let responsesSent = false;
 
     stream
@@ -211,6 +242,15 @@ app.post('/process-csv', upload.single('file'), (req, res) => {
           // Procesar datos - SOLO HOY
           const result = processConversationData(rows);
           const statistics = generateStatistics(result, rows.length);
+          
+          console.log(`\n✅ Respuesta final:`);
+          console.log(`   Total filas CSV: ${rows.length}`);
+          console.log(`   Paneles encontrados: ${result.panels.length}`);
+          console.log(`   Estadísticas:`, {
+            total_conversaciones: statistics.total_conversaciones,
+            total_cargas: statistics.total_cargas,
+            porcentaje_general: result.panels.length > 0 ? ((statistics.total_cargas / statistics.total_conversaciones) * 100).toFixed(1) + '%' : 'N/A'
+          });
 
           res.json({
             success: true,
@@ -275,6 +315,45 @@ app.get('/debug-date', (req, res) => {
     offset_hours: -3,
     server_timezone: 'Vercel (UTC)'
   });
+});
+
+/**
+ * Debug: Procesar test_data.json
+ */
+app.get('/debug-process', (req, res) => {
+  try {
+    const testDataPath = path.join(__dirname, 'test_data.json');
+    if (!fs.existsSync(testDataPath)) {
+      return res.status(404).json({ error: 'test_data.json not found' });
+    }
+    
+    const testData = JSON.parse(fs.readFileSync(testDataPath, 'utf-8'));
+    console.log('\n🔍 Debug endpoint: procesando test_data.json');
+    console.log(`   Filas en test_data.json: ${testData.length}`);
+    
+    // Convertir a formato esperado
+    const rows = testData.map(item => ({
+      createdAt: item.createdAt || item.fecha || '',
+      department: item.department || item.panel || '',
+      connection: item.connection || item.campaña || '',
+      conversationTags: item.conversationTags || item.tags || ''
+    }));
+    
+    const result = processConversationData(rows);
+    const statistics = generateStatistics(result, rows.length);
+    
+    res.json({
+      success: true,
+      message: 'Test data processed',
+      data: result.panels,
+      statistics: statistics,
+      allDatesFound: result.allDatesFound,
+      today: result.today
+    });
+  } catch (error) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**
