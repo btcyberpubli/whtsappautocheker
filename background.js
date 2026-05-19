@@ -2,6 +2,43 @@
 
 console.log('🔧 Service Worker de WhatsApp Auto Checker cargado');
 
+// 🔌 Conexión persistente con el content script
+let contentPort = null;
+
+// Listener para mantener puerto activo
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'whatsapp-checker-port') {
+    console.log('🔌 [BG] Puerto de conexión persistente establecido con content script');
+    contentPort = port;
+    
+    port.onDisconnect.addListener(() => {
+      console.log('❌ [BG] Puerto desconectado, intentando reconectar en 2s...');
+      contentPort = null;
+      // Intentar reconectar
+      setTimeout(() => {
+        chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
+          if (tabs.length > 0) {
+            console.log('🔄 [BG] Reconectando con content script...');
+            chrome.tabs.sendMessage(tabs[0].id, {
+              action: 'reconnect'
+            }).catch(() => {
+              console.log('ℹ️ Content script no disponible aún');
+            });
+          }
+        });
+      }, 2000);
+    });
+    
+    // Escuchar mensajes del content script
+    port.onMessage.addListener((msg) => {
+      if (msg.action === 'ping') {
+        console.log('💓 [BG] Ping recibido del content script, respondiendo pong...');
+        port.postMessage({ action: 'pong', timestamp: Date.now() });
+      }
+    });
+  }
+});
+
 // Inicializar storage al instalar
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
@@ -19,14 +56,14 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
-// Crear alarma que se ejecute cada 10 minutos
+// Crear alarma que se ejecute cada 5 minutos
 function setupCheckInterval() {
-  console.log('⏰ Configurando alarma de verificación cada 10 minutos');
+  console.log('⏰ Configurando alarma de verificación cada 5 minutos');
   
   // Limpiar alarmas previas
   chrome.alarms.clear('whatsappCheckInterval', () => {
-    // Crear nueva alarma: cada 10 minutos (600 segundos)
-    chrome.alarms.create('whatsappCheckInterval', { periodInMinutes: 10 });
+    // Crear nueva alarma: cada 5 minutos (300 segundos)
+    chrome.alarms.create('whatsappCheckInterval', { periodInMinutes: 5 });
     console.log('✅ Alarma configurada correctamente');
   });
 }
@@ -127,7 +164,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.storage.local.set({ sentAlerts });
     });
   }
+  else if (message.action === 'heartbeatResponse') {
+    // Respuesta del content script al heartbeat
+    console.log('💓 Heartbeat recibido - content script activo');
+    chrome.storage.local.set({ lastHeartbeat: Date.now() });
+  }
 });
+
+// Sistema de heartbeat para mantener el content script despierto
+function setupHeartbeat() {
+  console.log('💓 Configurando heartbeat cada 2 segundos (con puerto persistente)');
+  
+  setInterval(() => {
+    chrome.storage.local.get('whatsappAutoRunning', (result) => {
+      if (result.whatsappAutoRunning) {
+        // Si hay puerto persistente, usarlo
+        if (contentPort) {
+          try {
+            contentPort.postMessage({
+              action: 'heartbeat',
+              timestamp: Date.now()
+            });
+          } catch (error) {
+            console.warn('⚠️ Error enviando por puerto:', error);
+            contentPort = null;
+          }
+        } else {
+          // Fallback: enviar mensaje directo
+          chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }, (tabs) => {
+            if (tabs.length > 0) {
+              chrome.tabs.sendMessage(tabs[0].id, {
+                action: 'heartbeat',
+                timestamp: Date.now()
+              }).catch((error) => {
+                console.log('ℹ️ Content script no disponible al hacer heartbeat');
+              });
+            }
+          });
+        }
+      }
+    });
+  }, 2000); // Cada 2 segundos (MÁS AGRESIVO)
+}
+
+// Iniciar heartbeat cuando la extensión se carga
+setupHeartbeat();
 
 // Al cargar, si estaba corriendo, reiniciar las alarmas
 chrome.storage.local.get('whatsappAutoRunning', (result) => {

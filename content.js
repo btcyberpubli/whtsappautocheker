@@ -84,6 +84,7 @@ function getAdaptiveTimeout() {
 const whatsappChecker = {
   running: false,
   checkInterval: null,
+  keepAliveInterval: null, // 💪 Intervalo de keep-alive continuo
   failedChats: [],
   maxRetries: 3,  // Reintentos máximos
   retryCount: {},  // Contador de reintentos por chat
@@ -95,6 +96,8 @@ const whatsappChecker = {
   minCycleIntervalMs: 300000, // Mínimo 5 minutos entre ciclos
   isProcessing: false, // Flag para evitar ciclos concurrentes
   windowHasFocus: true, // Detectar si la ventana está en focus
+  heartbeatCount: 0, // Contador de heartbeats recibidos
+  lastHeartbeatTime: 0, // Timestamp del último heartbeat
 
   /**
    * Espera a que la ventana vuelva a estar en focus
@@ -628,6 +631,19 @@ const whatsappChecker = {
    */
   getOurLastMessage() {
     try {
+      // MÉTODO 0: Buscar explícitamente por mensaje con timestamp reciente
+      // (Mejor para background - busca por estructura visual)
+      const recentMessages = document.querySelectorAll('div[data-testid*="msg"]');
+      for (let i = recentMessages.length - 1; i >= Math.max(0, recentMessages.length - 5); i--) {
+        const msg = recentMessages[i];
+        if (msg.offsetHeight > 0 && msg.textContent.trim().length > 0) {
+          // Verificar que tenga marca de tiempo
+          if (msg.innerHTML.includes(':') && msg.innerHTML.match(/\d{1,2}:\d{2}/)) {
+            return msg;
+          }
+        }
+      }
+
       // MÉTODO 1: Buscar por div con role="row" - más específico para background
       const messageRows = document.querySelectorAll('div[role="row"][data-testid*="msg"], div[data-testid*="msg-container"]');
       
@@ -695,60 +711,141 @@ const whatsappChecker = {
       return 'not_found';
     }
 
-    // Búsqueda exhaustiva de iconos en múltiples formas
+    // Debug: mostrar el HTML para diagnosticar
     const html = ourMsg.outerHTML;
+    const textContent = ourMsg.textContent;
     
-    // MÉTODO 1: Búsqueda por HTML directo (funciona en background)
-    // Buscar en el código HTML si contiene referencias a checkmarks
-    if (html.includes('dblcheck') || html.includes('double-check') || html.includes('✓✓')) {
-      console.log('✅ Nuestro mensaje: DOBLE TILDE (entregado y leído)');
+    console.log(`🔍 DEBUG: Buscando estado en elemento con contenido: "${textContent.substring(0, 50)}"...`);
+
+    // MÉTODO 0: Buscar en textContent por "dblcheck" o "double"
+    if (textContent.includes('dblcheck') || textContent.includes('double')) {
+      console.log(`✅ Nuestro mensaje: DOBLE TILDE (detectado en textContent)`);
       return 'double';
     }
     
-    if (html.includes('single-check') || html.includes('check') && !html.includes('dblcheck')) {
-      // Verificar que no sea "non-check" o similar
-      const textContent = ourMsg.textContent;
-      if (!textContent.includes('uncheck') && !textContent.includes('no check')) {
-        console.log('⚠️ Nuestro mensaje: SINGLE TILDE (enviado)');
+    // Si contiene "check" sin "dbl" es single
+    if (textContent.includes('check') && !textContent.includes('dbl')) {
+      console.log(`⚠️ Nuestro mensaje: SINGLE TILDE (detectado en textContent)`);
+      return 'single';
+    }
+
+    // MÉTODO 1: Buscar SVG con análisis de paths
+    const allSvgs = ourMsg.querySelectorAll('svg');
+    for (let svg of allSvgs) {
+      const paths = svg.querySelectorAll('path');
+      const pathCount = paths.length;
+      const svgHtml = svg.outerHTML;
+      
+      // Debug: mostrar estructura del SVG
+      console.log(`   🔎 SVG encontrado con ${pathCount} path(s). HTML: ${svgHtml.substring(0, 100)}...`);
+      
+      if (svgHtml.includes('check')) {
+        // Doble tilde típicamente tiene 2 paths (uno para cada checkmark)
+        // Single tilde tiene 1 path
+        if (pathCount >= 2) {
+          console.log(`✅ Nuestro mensaje: DOBLE TILDE (${pathCount} paths detectados)`);
+          return 'double';
+        } else if (pathCount === 1) {
+          console.log(`⚠️ Nuestro mensaje: SINGLE TILDE (${pathCount} path detectado)`);
+          return 'single';
+        }
+      }
+    }
+
+    // MÉTODO 2: Buscar por clases que contengan "double" o "double-check"
+    const allElements = ourMsg.querySelectorAll('[class*="check"], [class*="status"], [class*="icon"]');
+    for (let elem of allElements) {
+      const classes = elem.className;
+      
+      if (typeof classes === 'string') {
+        if (classes.includes('double') || classes.includes('dblcheck') || classes.includes('double-check')) {
+          console.log(`✅ Nuestro mensaje: DOBLE TILDE (clase: ${classes})`);
+          return 'double';
+        }
+        
+        if (classes.includes('single-check') || (classes.includes('check') && !classes.includes('double'))) {
+          console.log(`⚠️ Nuestro mensaje: SINGLE TILDE (clase: ${classes})`);
+          return 'single';
+        }
+      }
+    }
+
+    // MÉTODO 3: Buscar por aria-label que indique estado
+    const elementsWithAria = ourMsg.querySelectorAll('[aria-label*="check"], [aria-label*="entregado"], [aria-label*="leído"], [aria-label*="read"]');
+    for (let elem of elementsWithAria) {
+      const ariaLabel = elem.getAttribute('aria-label') || '';
+      
+      if (ariaLabel.includes('leído') || ariaLabel.includes('read') || ariaLabel.includes('double')) {
+        console.log(`✅ Nuestro mensaje: DOBLE TILDE (aria-label: ${ariaLabel})`);
+        return 'double';
+      }
+      
+      if (ariaLabel.includes('entregado') || ariaLabel.includes('delivered') || ariaLabel.includes('single')) {
+        console.log(`⚠️ Nuestro mensaje: SINGLE TILDE (aria-label: ${ariaLabel})`);
         return 'single';
       }
     }
-    
-    // MÉTODO 2: Buscar iconos por data-icon
-    let dblCheckIcon = ourMsg.querySelector('[data-icon*="dblcheck"], [data-icon*="double"]');
-    let singleCheckIcon = ourMsg.querySelector('[data-icon*="check"]:not([data-icon*="uncheck"])');
+
+    // MÉTODO 4: Buscar por data-icon específicamente
+    let dblCheckIcon = ourMsg.querySelector('[data-icon*="dblcheck"], [data-icon*="double"], [data-icon*="read"]');
+    let singleCheckIcon = ourMsg.querySelector('[data-icon*="check"]:not([data-icon*="double"])');
 
     if (dblCheckIcon) {
-      console.log('✅ Nuestro mensaje: DOBLE TILDE (por data-icon)');
+      console.log(`✅ Nuestro mensaje: DOBLE TILDE (data-icon)`);
       return 'double';
     } else if (singleCheckIcon) {
-      console.log('⚠️ Nuestro mensaje: SINGLE TILDE (por data-icon)');
+      console.log(`⚠️ Nuestro mensaje: SINGLE TILDE (data-icon)`);
       return 'single';
     }
-    
-    // MÉTODO 3: Búsqueda por SVG en el HTML
-    const svgMatch = html.match(/viewBox="0 0 (\d+) (\d+)"/);
-    if (svgMatch) {
-      const viewBoxWidth = parseInt(svgMatch[1]);
-      // Si viewBox es ancho (>32px), probablemente tenga 2 checkmarks (double)
-      if (viewBoxWidth > 32) {
-        console.log('✅ Nuestro mensaje: DOBLE TILDE (por SVG ancho)');
+
+    // MÉTODO 5: Análisis exhaustivo de HTML bruto
+    if (html.match(/checkmark|dblcheck|double/i)) {
+      const doubleMatch = html.match(/double|dblcheck/gi);
+      if (doubleMatch && doubleMatch.length > 0) {
+        console.log(`✅ Nuestro mensaje: DOBLE TILDE (HTML pattern)`);
         return 'double';
       }
     }
-    
-    // MÉTODO 4: Buscar directamente por símbolos unicode
-    const messageText = ourMsg.textContent;
-    const checkCount = (messageText.match(/✓/g) || []).length + (messageText.match(/✔/g) || []).length;
-    
-    if (checkCount >= 2) {
-      console.log('✅ Nuestro mensaje: DOBLE TILDE (por unicode)');
+
+    // MÉTODO 6: Buscar imágenes de checkmark
+    const imgs = ourMsg.querySelectorAll('img[src*="check"], img[alt*="check"]');
+    if (imgs.length >= 2) {
+      console.log(`✅ Nuestro mensaje: DOBLE TILDE (${imgs.length} imágenes de check)`);
       return 'double';
-    } else if (checkCount === 1) {
-      console.log('⚠️ Nuestro mensaje: SINGLE TILDE (por unicode)');
+    } else if (imgs.length === 1) {
+      console.log(`⚠️ Nuestro mensaje: SINGLE TILDE (1 imagen de check)`);
       return 'single';
     }
-    
+
+    // MÉTODO 7: Último recurso - buscar en todos los descendientes
+    const allDescendants = ourMsg.querySelectorAll('*');
+    let foundDouble = false;
+    let foundSingle = false;
+
+    for (let desc of allDescendants) {
+      const descClass = desc.className;
+      const descAttr = desc.getAttribute('data-icon') || '';
+      const descAria = desc.getAttribute('aria-label') || '';
+
+      if (descClass.includes('double') || descAttr.includes('double') || descAria.includes('double')) {
+        foundDouble = true;
+        break;
+      }
+
+      if ((descClass.includes('check') && !descClass.includes('double')) || 
+          (descAttr.includes('check') && !descAttr.includes('double'))) {
+        foundSingle = true;
+      }
+    }
+
+    if (foundDouble) {
+      console.log(`✅ Nuestro mensaje: DOBLE TILDE (descendientes)`);
+      return 'double';
+    } else if (foundSingle) {
+      console.log(`⚠️ Nuestro mensaje: SINGLE TILDE (descendientes)`);
+      return 'single';
+    }
+
     console.log('⏳ Nuestro mensaje: SIN TILDE (en proceso)');
     return 'none';
   },
@@ -781,42 +878,111 @@ const whatsappChecker = {
     }
     
     if (status === 'single') {
-      console.log(`✅ LÍNEA ACTIVA - Al menos single check (enviado)`);
-      return { read: true, alertSent: false };
+      console.log(`🚨 LÍNEA CAÍDA - Solo un tilde (mensaje NO entregado). Enviando alerta...`);
+      
+      const alertData = {
+        type: "whatsapp-downline",
+        contactName: chatName || "Desconocido",
+        chatId: chatId || "unknown@c.us",
+        lastMessage: message || "Mensaje de prueba",
+        detectedAt: new Date().toISOString(),
+        severity: "high",
+        source: "whatsapp-extension",
+        reason: "Single tick - message sent but not delivered"
+      };
+
+      const serverResponse = await this.sendAlertToServer(alertData);
+      
+      if (serverResponse && serverResponse.alertId) {
+        console.log(`✅ Alerta enviada por single tilde - ID: ${serverResponse.alertId}`);
+        return { read: false, alertSent: true, reason: 'single_tick' };
+      } else {
+        console.log(`❌ Error enviando alerta por single tilde`);
+        return { read: false, alertSent: false, reason: 'single_tick_error' };
+      }
     }
     
-    // Tratar 'not_found' y esperar más
-    if (status === 'not_found') {
+    // Tratar 'none' (sin tilde) y 'not_found' igual - esperar a que aparezca
+    if (status === 'none' || status === 'not_found') {
       // FASE 2: Esperar 5 segundos más (total 7s) y verificar nuevamente
-      console.log(`⏱️ FASE 2: Mensaje no encontrado. Esperando 5 segundos más...`);
+      const statusMsg = status === 'none' ? 'Icono de entrega aún no visible' : 'Mensaje no encontrado';
+      console.log(`⏱️ FASE 2: ${statusMsg}. Esperando 5 segundos más...`);
       await this.sleep(5000);
       
       status = this.getOurMessageStatus();
       console.log(`   Estado: ${status}`);
       
-      if (status === 'double' || status === 'single') {
-        console.log(`✅ LÍNEA ACTIVA - Mensaje detectado en fase 2`);
+      if (status === 'double') {
+        console.log(`✅ LÍNEA ACTIVA - Mensaje entregado en fase 2`);
         return { read: true, alertSent: false };
       }
       
-      if (status === 'not_found') {
+      if (status === 'single') {
+        console.log(`🚨 LÍNEA CAÍDA (FASE 2) - Single tilde después de 7 segundos. Enviando alerta...`);
+        
+        const alertData = {
+          type: "whatsapp-downline",
+          contactName: chatName || "Desconocido",
+          chatId: chatId || "unknown@c.us",
+          lastMessage: message || "Mensaje de prueba",
+          detectedAt: new Date().toISOString(),
+          severity: "high",
+          source: "whatsapp-extension",
+          reason: "Single tick after 7s - message not delivered"
+        };
+
+        const serverResponse = await this.sendAlertToServer(alertData);
+        
+        if (serverResponse && serverResponse.alertId) {
+          console.log(`✅ Alerta enviada (FASE 2) - ID: ${serverResponse.alertId}`);
+          return { read: false, alertSent: true, reason: 'single_tick_phase2' };
+        }
+        return { read: false, alertSent: false, reason: 'single_tick_phase2_error' };
+      }
+      
+      if (status === 'none' || status === 'not_found') {
         // FASE 3: Esperar 10 segundos más (total 17s) verificación final
-        console.log('⏱️ FASE 3: Sigue no encontrado. Esperando 10 segundos más (total 17s)...');
+        console.log('⏱️ FASE 3: Sigue problemático. Esperando 10 segundos más (total 17s)...');
         await this.sleep(10000);
         
         status = this.getOurMessageStatus();
         console.log(`   Estado FINAL: ${status}`);
         
-        // Incluso si 'not_found', el mensaje podría estar pero no encontrado por el selector
-        // Dar beneficio de la duda en este caso
-        if (status === 'double' || status === 'single') {
-          console.log(`✅ LÍNEA ACTIVA - Mensaje finalmente encontrado`);
+        // Si ahora aparece
+        if (status === 'double') {
+          console.log(`✅ LÍNEA ACTIVA - Mensaje finalmente entregado`);
           return { read: true, alertSent: false };
         }
         
-        if (status === 'not_found') {
-          // ALERTA: Después de 17 segundos persiste el problema
-          console.log(`🚨 ALERTA DEFINITIVA: Mensaje no encontrado después de 17 segundos`);
+        if (status === 'single') {
+          console.log(`🚨 LÍNEA CAÍDA (FASE 3) - Single tilde después de 17 segundos. Enviando alerta...`);
+          
+          const alertData = {
+            type: "whatsapp-downline",
+            contactName: chatName || "Desconocido",
+            chatId: chatId || "unknown@c.us",
+            lastMessage: message || "Mensaje de prueba",
+            detectedAt: new Date().toISOString(),
+            severity: "high",
+            source: "whatsapp-extension",
+            reason: "Single tick after 17s - message not delivered"
+          };
+
+          const serverResponse = await this.sendAlertToServer(alertData);
+          
+          if (serverResponse && serverResponse.alertId) {
+            console.log(`✅ Alerta enviada (FASE 3) - ID: ${serverResponse.alertId}`);
+            return { read: false, alertSent: true, reason: 'single_tick_phase3' };
+          }
+          return { read: false, alertSent: false, reason: 'single_tick_phase3_error' };
+        }
+        
+        // Si sigue sin tilde después de 17 segundos = ALERTA
+        if (status === 'none' || status === 'not_found') {
+          const alertReason = status === 'not_found' 
+            ? 'Mensaje no encontrado después de 17 segundos'
+            : 'Mensaje sin confirmación de entrega después de 17 segundos';
+          console.log(`🚨 ALERTA DEFINITIVA: ${alertReason}`);
           
           const alertData = {
             type: "whatsapp-downline",
@@ -830,7 +996,7 @@ const whatsappChecker = {
 
           const serverResponse = await this.sendAlertToServer(alertData);
           
-          if (serverResponse && serverResponse.success) {
+          if (serverResponse && serverResponse.alertId) {
             console.log(`✅ Alerta enviada - ID: ${serverResponse.alertId}`);
             
             // Guardar en storage local
@@ -1324,8 +1490,8 @@ const whatsappChecker = {
           await this.simulateRandomScroll();
         }
         
-        // Esperar variable entre chats (con timeouts adaptativos)
-        const waitTime = getRandomDelay(2500, 5500);
+        // Esperar variable entre chats (10s a 15s aleatorios)
+        const waitTime = getRandomDelay(10000, 15000);
         console.log(`⏳ Esperando ${waitTime}ms antes del siguiente chat...`);
         await this.sleep(waitTime);
       }
@@ -1425,6 +1591,34 @@ const whatsappChecker = {
     this.isProcessing = false; // Resetear flag de procesamiento
     console.log('🟢 WhatsApp Auto Checker INICIADO');
 
+    // � CREAR PUERTO PERSISTENTE CON SERVICE WORKER
+    try {
+      const port = chrome.runtime.connect({ name: 'whatsapp-checker-port' });
+      console.log('🔌 [CONTENT] Conectando puerto persistente con Service Worker...');
+      
+      port.onMessage.addListener((message) => {
+        if (message.action === 'heartbeat') {
+          console.log(`💓 [CONTENT PORT] Heartbeat recibido - ejecutando keep-alive...`);
+          this.keepAlive();
+          port.postMessage({ action: 'heartbeatAck', timestamp: Date.now() });
+        } else if (message.action === 'pong') {
+          console.log(`🏓 [CONTENT PORT] Pong del Service Worker recibido`);
+        }
+      });
+      
+      port.onDisconnect.addListener(() => {
+        console.log('⚠️ [CONTENT] Puerto desconectado, intentando reconectar en 3s...');
+        setTimeout(() => {
+          this.start(); // Intentar reconectar
+        }, 3000);
+      });
+      
+      // Enviar ping inicial
+      port.postMessage({ action: 'ping', timestamp: Date.now() });
+    } catch (error) {
+      console.warn('⚠️ Error al conectar puerto persistente:', error);
+    }
+
     // 🔔 Listeners para detectar focus de ventana
     window.addEventListener('focus', () => {
       this.windowHasFocus = true;
@@ -1433,8 +1627,17 @@ const whatsappChecker = {
 
     window.addEventListener('blur', () => {
       this.windowHasFocus = false;
-      console.log('⚠️ ¡VENTANA MINIMIZADA/EN BACKGROUND! - Pausando hasta que vuelva...');
+      console.log('⚠️ ¡VENTANA MINIMIZADA/EN BACKGROUND! - Keep-alive continuo mantendrá viva la conexión...');
     });
+
+    // 💪 INICIAR KEEP-ALIVE CONTINUO (cada 2 segundos para máxima efectividad)
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+    }
+    this.keepAliveInterval = setInterval(() => {
+      this.keepAlive();
+    }, 2000); // Cada 2 segundos (más frecuente)
+    console.log('💪 Keep-alive continuo iniciado (cada 2s)');
 
     // ❌ NO EJECUTAR CICLO AQUÍ - El service worker maneja todo
     // Solo nos subscribimos a sus mensajes
@@ -1453,7 +1656,69 @@ const whatsappChecker = {
       this.checkInterval = null;
     }
     
+    // 💪 Detener keep-alive continuo
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+      console.log('🛑 Keep-alive continuo detenido');
+    }
+    
     console.log('🔴 WhatsApp Auto Checker DETENIDO');
+  },
+
+  /**
+   * 💪 Keep-alive: Mantiene el content script y la pestaña activos
+   * Ejecuta actividades múltiples para prevenir que Chrome suspenda la pestaña
+   */
+  keepAlive() {
+    try {
+      // 1. Acceso agresivo a DOM (fuerza evaluación)
+      const elements = document.querySelectorAll('*').length;
+      const body = document.body.offsetHeight;
+      const scrollH = window.scrollY;
+      
+      // 2. Simular eventos del usuario
+      const event = new MouseEvent('mousemove', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: Math.random() * window.innerWidth,
+        clientY: Math.random() * window.innerHeight
+      });
+      document.dispatchEvent(event);
+
+      // 3. Pequeño scroll para mantener animaciones del navegador
+      window.scrollBy(0, 1);
+      window.scrollBy(0, -1);
+
+      // 4. Acceso a storage (Chrome sabe que el script está activo)
+      try {
+        const stored = localStorage.getItem('__keepalive__');
+        localStorage.setItem('__keepalive__', Date.now().toString());
+      } catch (e) {
+        // Si localStorage no está disponible, ignorar
+      }
+
+      // 5. Trigger de mutation en el DOM (Chrome detecta actividad)
+      const dummy = document.createElement('div');
+      document.body.appendChild(dummy);
+      dummy.style.display = 'none';
+      document.body.removeChild(dummy);
+
+      // 6. Update de timestamp en memoria
+      this.lastHeartbeatTime = Date.now();
+
+      // 7. Crear un pequeño setTimeout para que Chrome vea actividad async
+      setTimeout(() => {
+        try {
+          const _ = window.innerWidth;
+        } catch (e) {}
+      }, 100);
+
+      console.log('💪 Keep-alive ejecutado - Content script activo');
+    } catch (error) {
+      console.warn('⚠️ Error en keep-alive:', error);
+    }
   }
 };
 
@@ -1500,7 +1765,28 @@ if (typeof chrome !== 'undefined' && chrome.runtime) {
               sendResponse({ status: 'no_corriendo' });
             }
           });
-        } else {
+        }
+        else if (message.action === 'heartbeat') {
+          // ❤️ Heartbeat del Service Worker para mantener el content script despierto
+          whatsappChecker.heartbeatCount++;
+          console.log(`💓 [CONTENT MSG] Heartbeat #${whatsappChecker.heartbeatCount} - respondiendo...`);
+          
+          // Ejecutar actividad para mantener la pestaña "viva"
+          whatsappChecker.keepAlive();
+          
+          chrome.runtime.sendMessage({
+            action: 'heartbeatResponse'
+          }).catch(() => {
+            console.warn('⚠️ Error respondiendo al heartbeat');
+          });
+          sendResponse({ status: 'heartbeat_ok', count: whatsappChecker.heartbeatCount });
+        }
+        else if (message.action === 'reconnect') {
+          console.log('🔄 [CONTENT] Solicitud de reconexión recibida');
+          whatsappChecker.start(); // Reintentar conexión del puerto
+          sendResponse({ status: 'reconnecting' });
+        }
+        else {
           console.warn('⚠️ Acción desconocida:', message.action);
           sendResponse({ status: 'unknown_action' });
         }
