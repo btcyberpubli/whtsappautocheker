@@ -94,6 +94,37 @@ const whatsappChecker = {
   lastCycleTime: 0, // Controlar que no se ejecuten ciclos muy seguidos
   minCycleIntervalMs: 300000, // Mínimo 5 minutos entre ciclos
   isProcessing: false, // Flag para evitar ciclos concurrentes
+  windowHasFocus: true, // Detectar si la ventana está en focus
+
+  /**
+   * Espera a que la ventana vuelva a estar en focus
+   */
+  async waitForWindowFocus() {
+    if (document.hasFocus()) {
+      return; // Ventana ya está en focus
+    }
+
+    console.log('⚠️ VENTANA EN BACKGROUND - Esperando que vuelva a focus...');
+    
+    return new Promise((resolve) => {
+      const focusHandler = () => {
+        console.log('✅ ¡Ventana activa nuevamente! Reanudando operaciones...');
+        window.removeEventListener('focus', focusHandler);
+        this.windowHasFocus = true;
+        resolve();
+      };
+
+      window.addEventListener('focus', focusHandler);
+      this.windowHasFocus = false;
+
+      // Timeout de 30 segundos para no esperar eternamente
+      setTimeout(() => {
+        console.log('⏱️ Timeout esperando focus (30s) - continuando de todas formas');
+        window.removeEventListener('focus', focusHandler);
+        resolve();
+      }, 30000);
+    });
+  },
 
   /**
    * Obtiene todos los chats de la lista
@@ -208,27 +239,69 @@ const whatsappChecker = {
       chatElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await this.sleep(1000);
       
-      // ESTRATEGIA 1: Intentar click en el elemento row con eventos realistas
-      console.log(`🎯 Estrategia 1: Click en role="row" con eventos del mouse...`);
-      let clickedSuccessfully = this.simulateRealClick(chatElement);
+      // Intentos múltiples para abrir el chat (importante en background)
+      const maxAttempts = 4;
+      let attempt = 0;
+      let inputBox = null;
       
-      if (clickedSuccessfully) {
-        console.log('✅ Eventos de mouse disparados en role="row"');
-        await this.sleep(3500);
-      }
-      
-      // ESTRATEGIA 2: Si no abrió, intentar en elemento tabindex="0"
-      let inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
-      if (!inputBox) {
-        console.log(`🎯 Estrategia 2: Buscando elemento [tabindex="0"]...`);
-        const tabbableElement = chatElement.querySelector('[tabindex="0"]');
+      while (!inputBox && attempt < maxAttempts) {
+        // ESTRATEGIA 1: Click con eventos realistas
+        if (attempt === 0) {
+          console.log(`🎯 Estrategia 1: Click en role="row" con eventos del mouse...`);
+          this.simulateRealClick(chatElement);
+          await this.sleep(4000); // Más tiempo en background
+        }
         
-        if (tabbableElement) {
-          console.log('✅ Elemento [tabindex="0"] encontrado, clickeando...');
-          tabbableElement.focus();
-          await this.sleep(400);
-          this.simulateRealClick(tabbableElement);
-          await this.sleep(3500);
+        // ESTRATEGIA 2: Click en tabindex="0"
+        if (attempt === 1) {
+          const tabbableElement = chatElement.querySelector('[tabindex="0"]');
+          if (tabbableElement) {
+            console.log(`🎯 Estrategia 2: Click en [tabindex="0"]...`);
+            tabbableElement.focus();
+            await this.sleep(500);
+            this.simulateRealClick(tabbableElement);
+            await this.sleep(4000);
+          }
+        }
+        
+        // ESTRATEGIA 3: Double-click
+        if (attempt === 2) {
+          console.log(`🎯 Estrategia 3: Double-click en chatElement...`);
+          const dblClickEvent = new MouseEvent('dblclick', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          });
+          chatElement.dispatchEvent(dblClickEvent);
+          await this.sleep(4000);
+        }
+        
+        // ESTRATEGIA 4: Keyboard navigation (Enter key)
+        if (attempt === 3) {
+          console.log(`🎯 Estrategia 4: Keyboard navigation (Enter)...`);
+          chatElement.focus();
+          const enterEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          });
+          chatElement.dispatchEvent(enterEvent);
+          await this.sleep(4000);
+        }
+        
+        // Verificar si se abrió
+        inputBox = document.querySelector('[data-testid="conversation-compose-box-input"]');
+        if (inputBox) {
+          console.log('✅ Chat abierto correctamente');
+          return true;
+        }
+        
+        attempt++;
+        if (attempt < maxAttempts) {
+          console.log(`⏳ Intento ${attempt}/${maxAttempts} fallido, reintentando...`);
         }
       }
       
@@ -551,32 +624,56 @@ const whatsappChecker = {
 
   /**
    * Busca NUESTRO último mensaje enviado (el que acabamos de mandar)
+   * Estrategia mejorada para funcionar en BACKGROUND
    */
   getOurLastMessage() {
     try {
-      // En WhatsApp Web, nuestros mensajes están en el lado derecho (after/)
-      // Buscar todos los contenedores de mensaje
-      const allMessages = document.querySelectorAll('[data-testid="message-pane-container"] [role="gridcell"], [data-testid="msg-container"]');
+      // MÉTODO 1: Buscar por div con role="row" - más específico para background
+      const messageRows = document.querySelectorAll('div[role="row"][data-testid*="msg"], div[data-testid*="msg-container"]');
       
-      if (allMessages.length > 0) {
-        // El último mensaje debería ser el nuestro
-        const lastMsg = allMessages[allMessages.length - 1];
-        
-        // Verificar que sea nuestro buscando clases típicas (after/ o similar)
-        const classes = lastMsg.className;
-        const isOurs = classes.includes('after/') || lastMsg.closest('[style*="margin-left"]') || lastMsg.getAttribute('data-own-message') === 'true';
-        
-        if (isOurs || allMessages.length === 1) {
-          return lastMsg;
+      if (messageRows.length > 0) {
+        // Iterar desde el final hacia atrás
+        for (let i = messageRows.length - 1; i >= 0; i--) {
+          const row = messageRows[i];
+          
+          // Verificar que tiene contenido visible
+          if (row.offsetHeight > 0 && row.textContent.trim().length > 0) {
+            return row;
+          }
         }
       }
       
-      // MÉTODO 2: Buscar por estructura específica de WhatsApp (nuestros mensajes a la derecha)
-      const messagePane = document.querySelector('[data-testid="message-pane-container"]');
-      if (messagePane) {
-        const cells = messagePane.querySelectorAll('[role="gridcell"]');
-        if (cells.length > 0) {
-          return cells[cells.length - 1];
+      // MÉTODO 2: Buscar en scrollable message area (más específico)
+      const messageArea = document.querySelector('div[data-testid="conversation-panel-messages"] div[role="row"]:last-child');
+      if (messageArea && messageArea.textContent.trim().length > 0) {
+        return messageArea;
+      }
+      
+      // MÉTODO 3: Buscar por estructura visual - último div grande con texto
+      const allDivs = document.querySelectorAll('div');
+      let lastMessageDiv = null;
+      let lastPos = -1;
+      
+      for (let div of allDivs) {
+        const ariaLabel = div.getAttribute('aria-label') || '';
+        const dataTestId = div.getAttribute('data-testid') || '';
+        
+        // Si tiene aria-label con hora/timestamp, probablemente es un mensaje
+        if (ariaLabel.match(/\d{1,2}:\d{2}/) && div.offsetHeight > 20) {
+          lastMessageDiv = div;
+          lastPos = Array.from(allDivs).indexOf(div);
+        }
+      }
+      
+      if (lastMessageDiv && lastPos > -1) {
+        return lastMessageDiv;
+      }
+      
+      // MÉTODO 4: Búsqueda por jerarquía (último texto largo visible)
+      const bodyDivs = document.body.querySelectorAll('div[style*="right"]');
+      for (let i = bodyDivs.length - 1; i >= 0; i--) {
+        if (bodyDivs[i].offsetHeight > 30 && bodyDivs[i].textContent.trim().length > 2) {
+          return bodyDivs[i];
         }
       }
       
@@ -589,6 +686,7 @@ const whatsappChecker = {
 
   /**
    * Obtiene el estado del icono de nuestro mensaje (undefined/single/double)
+   * Mejorado para funcionar en BACKGROUND
    */
   getOurMessageStatus() {
     const ourMsg = this.getOurLastMessage();
@@ -597,20 +695,62 @@ const whatsappChecker = {
       return 'not_found';
     }
 
-    // Buscar icono de estado dentro de nuestro mensaje
-    const dblCheckIcon = ourMsg.querySelector('[data-icon="status-dblcheck"]');
-    const singleCheckIcon = ourMsg.querySelector('[data-icon="status-check"]');
-
-    if (dblCheckIcon) {
+    // Búsqueda exhaustiva de iconos en múltiples formas
+    const html = ourMsg.outerHTML;
+    
+    // MÉTODO 1: Búsqueda por HTML directo (funciona en background)
+    // Buscar en el código HTML si contiene referencias a checkmarks
+    if (html.includes('dblcheck') || html.includes('double-check') || html.includes('✓✓')) {
       console.log('✅ Nuestro mensaje: DOBLE TILDE (entregado y leído)');
       return 'double';
-    } else if (singleCheckIcon) {
-      console.log('⚠️ Nuestro mensaje: SINGLE TILDE (enviado, no entregado)');
-      return 'single';
-    } else {
-      console.log('⏳ Nuestro mensaje: SIN TILDE (en proceso)');
-      return 'none';
     }
+    
+    if (html.includes('single-check') || html.includes('check') && !html.includes('dblcheck')) {
+      // Verificar que no sea "non-check" o similar
+      const textContent = ourMsg.textContent;
+      if (!textContent.includes('uncheck') && !textContent.includes('no check')) {
+        console.log('⚠️ Nuestro mensaje: SINGLE TILDE (enviado)');
+        return 'single';
+      }
+    }
+    
+    // MÉTODO 2: Buscar iconos por data-icon
+    let dblCheckIcon = ourMsg.querySelector('[data-icon*="dblcheck"], [data-icon*="double"]');
+    let singleCheckIcon = ourMsg.querySelector('[data-icon*="check"]:not([data-icon*="uncheck"])');
+
+    if (dblCheckIcon) {
+      console.log('✅ Nuestro mensaje: DOBLE TILDE (por data-icon)');
+      return 'double';
+    } else if (singleCheckIcon) {
+      console.log('⚠️ Nuestro mensaje: SINGLE TILDE (por data-icon)');
+      return 'single';
+    }
+    
+    // MÉTODO 3: Búsqueda por SVG en el HTML
+    const svgMatch = html.match(/viewBox="0 0 (\d+) (\d+)"/);
+    if (svgMatch) {
+      const viewBoxWidth = parseInt(svgMatch[1]);
+      // Si viewBox es ancho (>32px), probablemente tenga 2 checkmarks (double)
+      if (viewBoxWidth > 32) {
+        console.log('✅ Nuestro mensaje: DOBLE TILDE (por SVG ancho)');
+        return 'double';
+      }
+    }
+    
+    // MÉTODO 4: Buscar directamente por símbolos unicode
+    const messageText = ourMsg.textContent;
+    const checkCount = (messageText.match(/✓/g) || []).length + (messageText.match(/✔/g) || []).length;
+    
+    if (checkCount >= 2) {
+      console.log('✅ Nuestro mensaje: DOBLE TILDE (por unicode)');
+      return 'double';
+    } else if (checkCount === 1) {
+      console.log('⚠️ Nuestro mensaje: SINGLE TILDE (por unicode)');
+      return 'single';
+    }
+    
+    console.log('⏳ Nuestro mensaje: SIN TILDE (en proceso)');
+    return 'none';
   },
 
   /**
@@ -626,40 +766,57 @@ const whatsappChecker = {
     let status = this.getOurMessageStatus();
     console.log(`   Estado: ${status}`);
     
+    // Debug: mostrar elemento encontrado
+    const msg = this.getOurLastMessage();
+    if (msg) {
+      console.log(`   Elemento encontrado: ${msg.tagName} con clases: ${msg.className}`);
+      console.log(`   Contenido: ${msg.textContent.substring(0, 50)}...`);
+    } else {
+      console.log('   ⚠️ Elemento de mensaje NO ENCONTRADO en DOM');
+    }
+    
     if (status === 'double') {
       console.log(`✅ LÍNEA ACTIVA - Mensaje entregado en fase 1`);
       return { read: true, alertSent: false };
     }
     
-    // Tratar 'not_found' y 'single' igual: ambos son problemas potenciales
-    if (status === 'single' || status === 'not_found') {
+    if (status === 'single') {
+      console.log(`✅ LÍNEA ACTIVA - Al menos single check (enviado)`);
+      return { read: true, alertSent: false };
+    }
+    
+    // Tratar 'not_found' y esperar más
+    if (status === 'not_found') {
       // FASE 2: Esperar 5 segundos más (total 7s) y verificar nuevamente
-      const statusType = status === 'not_found' ? 'Mensaje no encontrado' : 'Single check detectado';
-      console.log(`⏱️ FASE 2: ${statusType}. Esperando 5 segundos más...`);
+      console.log(`⏱️ FASE 2: Mensaje no encontrado. Esperando 5 segundos más...`);
       await this.sleep(5000);
       
       status = this.getOurMessageStatus();
       console.log(`   Estado: ${status}`);
       
-      if (status === 'double') {
-        console.log(`✅ LÍNEA ACTIVA - Mensaje entregado en fase 2`);
+      if (status === 'double' || status === 'single') {
+        console.log(`✅ LÍNEA ACTIVA - Mensaje detectado en fase 2`);
         return { read: true, alertSent: false };
       }
       
-      if (status === 'single' || status === 'not_found') {
+      if (status === 'not_found') {
         // FASE 3: Esperar 10 segundos más (total 17s) verificación final
-        console.log('⏱️ FASE 3: Sigue problemático. Esperando 10 segundos más (total 17s)...');
+        console.log('⏱️ FASE 3: Sigue no encontrado. Esperando 10 segundos más (total 17s)...');
         await this.sleep(10000);
         
         status = this.getOurMessageStatus();
-        console.log(`   Estado: ${status}`);
+        console.log(`   Estado FINAL: ${status}`);
         
-        if (status === 'single' || status === 'not_found') {
+        // Incluso si 'not_found', el mensaje podría estar pero no encontrado por el selector
+        // Dar beneficio de la duda en este caso
+        if (status === 'double' || status === 'single') {
+          console.log(`✅ LÍNEA ACTIVA - Mensaje finalmente encontrado`);
+          return { read: true, alertSent: false };
+        }
+        
+        if (status === 'not_found') {
           // ALERTA: Después de 17 segundos persiste el problema
-          const alertReason = status === 'not_found' 
-            ? 'Mensaje no encontrado después de 17 segundos'
-            : 'Single tilde persistente después de 17 segundos';
-          console.log(`🚨 ALERTA DEFINITIVA: ${alertReason}`);
+          console.log(`🚨 ALERTA DEFINITIVA: Mensaje no encontrado después de 17 segundos`);
           
           const alertData = {
             type: "whatsapp-downline",
@@ -1267,6 +1424,17 @@ const whatsappChecker = {
     this.lastCycleTime = 0; // Resetear tiempo del último ciclo
     this.isProcessing = false; // Resetear flag de procesamiento
     console.log('🟢 WhatsApp Auto Checker INICIADO');
+
+    // 🔔 Listeners para detectar focus de ventana
+    window.addEventListener('focus', () => {
+      this.windowHasFocus = true;
+      console.log('✅ ¡VENTANA ACTIVA! - Reanudando operaciones...');
+    });
+
+    window.addEventListener('blur', () => {
+      this.windowHasFocus = false;
+      console.log('⚠️ ¡VENTANA MINIMIZADA/EN BACKGROUND! - Pausando hasta que vuelva...');
+    });
 
     // ❌ NO EJECUTAR CICLO AQUÍ - El service worker maneja todo
     // Solo nos subscribimos a sus mensajes
